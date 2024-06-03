@@ -1,7 +1,7 @@
 /******************************************************************************
 *
 *
-* Notepad2
+* Notepad4
 *
 * Bridge.cpp
 *   Functionalities implemented in C++:
@@ -33,23 +33,14 @@ struct IUnknown;
 
 #include "SciCall.h"
 #include "VectorISA.h"
-#if !NP2_FORCE_COMPILE_C_AS_CPP
-extern "C" {
-#endif
-
 #include "Helpers.h"
 #include "Dialogs.h"
-#include "Notepad2.h"
+#include "Notepad4.h"
 #include "Edit.h"
 #include "Styles.h"
-
-#if !NP2_FORCE_COMPILE_C_AS_CPP
-}
-#endif
 #include "resource.h"
 
 // Global settings...
-#if NP2_FORCE_COMPILE_C_AS_CPP
 extern HWND hwndMain;
 extern PrintHeaderOption iPrintHeader;
 extern PrintFooterOption iPrintFooter;
@@ -58,16 +49,6 @@ extern int iPrintZoom;
 extern RECT pageSetupMargin;
 extern HWND hwndStatus;
 extern WCHAR defaultTextFontName[LF_FACESIZE];
-#else
-extern "C" HWND hwndMain;
-extern "C" PrintHeaderOption iPrintHeader;
-extern "C" PrintFooterOption iPrintFooter;
-extern "C" int iPrintColor;
-extern "C" int iPrintZoom;
-extern "C" RECT pageSetupMargin;
-extern "C" HWND hwndStatus;
-extern "C" WCHAR defaultTextFontName[LF_FACESIZE];
-#endif
 
 namespace {
 
@@ -119,7 +100,7 @@ void EditPrintInit() noexcept {
 //
 // EditPrint() - Code from SciTEWin::Print()
 //
-extern "C" bool EditPrint(HWND hwnd, LPCWSTR pszDocTitle, BOOL bDefault) {
+bool EditPrint(HWND hwnd, LPCWSTR pszDocTitle, BOOL bDefault) noexcept {
 	PRINTDLG pdlg;
 	memset(&pdlg, 0, sizeof(PRINTDLG));
 	pdlg.lStructSize = sizeof(PRINTDLG);
@@ -333,7 +314,7 @@ extern "C" bool EditPrint(HWND hwnd, LPCWSTR pszDocTitle, BOOL bDefault) {
 	}
 
 	// We must substract the physical margins from the printable area
-	struct Sci_RangeToFormatFull frPrint;
+	Sci_RangeToFormatFull frPrint;
 	frPrint.hdc = hdc;
 	frPrint.hdcTarget = hdc;
 	frPrint.rc.left		= rectMargins.left - rectPhysMargins.left;
@@ -568,7 +549,7 @@ static UINT_PTR CALLBACK PageSetupHook(HWND hwnd, UINT uiMsg, WPARAM wParam, LPA
 	return 0;
 }
 
-extern "C" void EditPrintSetup(HWND hwnd) {
+void EditPrintSetup(HWND hwnd) noexcept {
 	DLGTEMPLATE *pDlgTemplate = LoadThemedDialogTemplate(MAKEINTRESOURCE(IDD_PAGESETUP), g_hInstance);
 
 	PAGESETUPDLG pdlg;
@@ -648,7 +629,7 @@ DocumentStyledText GetDocumentStyledText(uint8_t (&styleMap)[STYLE_MAX + 1], con
 	for (size_t offset = 0; offset < textLength; offset++) {
 		const uint8_t style = styledText[offset];
 		styleUsed[style >> 5] |= (1U << (style & 31));
-		maxStyle = max_u(style, maxStyle);
+		maxStyle = max<unsigned>(style, maxStyle);
 	}
 
 	++maxStyle;
@@ -1328,7 +1309,7 @@ std::string CodePretty(LPCEDITLEXER pLex, const char *styledText, size_t textLen
 
 }
 
-extern "C" void EditFormatCode(int menu) {
+void EditFormatCode(int menu) noexcept {
 	LPCEDITLEXER pLex = pLexCurrent;
 	if (menu != IDM_EDIT_COPYRTF && pLex->iLexer != SCLEX_JSON && pLex->iLexer != SCLEX_CSS && pLex->iLexer != SCLEX_JAVASCRIPT) {
 		return;

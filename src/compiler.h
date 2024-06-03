@@ -1,4 +1,4 @@
-// This file is part of Notepad2.
+// This file is part of Notepad4.
 // See License.txt for details about distribution and modification.
 #pragma once
 
@@ -13,18 +13,12 @@ typedef _Bool	bool;
 #define nullptr	NULL
 #endif
 
-#ifndef NP2_noexcept
-	#if defined(__cplusplus)
-		#define NP2_noexcept noexcept
-	#else
-		#define NP2_noexcept
-	#endif
-#endif
-
 #if defined(__GNUC__) || defined(__clang__)
 #define NP2_unreachable()	__builtin_unreachable()
+#define NP2_memchr			__builtin_memchr
 #else
 #define NP2_unreachable()	__assume(0)
+#define NP2_memchr			__builtin_char_memchr
 #endif
 
 #if defined(__clang__)
@@ -39,14 +33,6 @@ typedef _Bool	bool;
 	} while (0)
 #else
 #define NP2_assume(expr)
-#endif
-
-#if defined(__cplusplus)
-#define NP2_static_assert(expr)		static_assert(expr)
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#define NP2_static_assert(expr)		_Static_assert(expr, #expr)
-#else
-#define NP2_static_assert(expr)		_STATIC_ASSERT(expr)
 #endif
 
 // suppress clang-tidy [bugprone-multi-level-implicit-pointer-conversion] warning
@@ -90,23 +76,11 @@ typedef _Bool	bool;
 #define NP2_IGNORE_WARNING_DEPRECATED_DECLARATIONS	__pragma(warning(disable: 4996))
 #endif
 
-// suppress [-Wimplicit-fallthrough] warning in C source
-#if defined(__cplusplus)
-#define FALLTHROUGH_ATTR		[[fallthrough]]
-#elif (defined(__GNUC__) && __GNUC__ >= 7) || (defined(__clang__) && __clang_major__ >= 10)
-#define FALLTHROUGH_ATTR		__attribute__((fallthrough))
-#else
-#define FALLTHROUGH_ATTR
-#endif
-
 #if defined(__cplusplus) || defined(_MSC_VER)
 	#define NP2_inline	inline
 #else
 	#define NP2_inline	static inline
 #endif
-
-// force compile C as CPP: /TP for MSVC and clang-cl, -x c++ for GCC and clang
-#define NP2_FORCE_COMPILE_C_AS_CPP	0
 
 #define PP_CONCAT_(x, y)	x##y
 #define PP_CONCAT(x, y)		PP_CONCAT_(x, y)

@@ -1,4 +1,4 @@
-// This file is part of Notepad2.
+// This file is part of Notepad4.
 // See License.txt for details about distribution and modification.
 //! Lexer for Markdown
 
@@ -1856,7 +1856,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 	if (startPos != 0) {
 		Sci_PositionU pos = startPos;
 		const uint8_t ch = GetCharAfterSpace(styler, pos, 4);
-		if (IsBlockStartChar(ch) || pos - startPos == 4) {
+		if (initStyle == SCE_MARKDOWN_INDENTED_BLOCK || IsBlockStartChar(ch) || pos - startPos == 4) {
 			// backtrack to previous line for better coloring on typing.
 			const Sci_PositionU endPos = startPos + lengthDoc;
 			const Sci_Line currentLine = styler.GetLine(startPos);
