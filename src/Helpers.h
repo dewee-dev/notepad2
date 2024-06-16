@@ -150,16 +150,30 @@ inline bool StrCaseEqual(LPCWSTR s1, LPCWSTR s2) noexcept {
 	return _wcsicmp(s1, s2) == 0;
 }
 
-#define StrCpyExW(s, t)						memcpy((s), (t), STRSIZE(t))
-#define StrEqualExW(s, t)					(memcmp((s), (t), STRSIZE(t)) == 0)
-#define StrHasPrefix(s, prefix)				(memcmp((s), (prefix), STRSIZE(prefix) - sizeof(WCHAR)) == 0)
-#define StrHasPrefixCase(s, prefix)			(_wcsnicmp((s), (prefix), CSTRLEN(prefix)) == 0)
-#define StrHasPrefixCaseEx(s, prefix, len)	(_wcsnicmp((s), (prefix), (len)) == 0)
+template <typename T, size_t N>
+inline void StrCpyEx(T *s, const T (&t)[N]) noexcept {
+	memcpy(s, t, N*sizeof(T));
+}
 
-#define StrEqualExA(s, t)					(memcmp((s), (t), COUNTOF(t)) == 0)
-#define StrStartsWith(s, prefix)			(memcmp((s), (prefix), CSTRLEN(prefix)) == 0)
-#define StrStartsWithCase(s, prefix)		(_strnicmp((s), (prefix), CSTRLEN(prefix)) == 0)
-#define StrStartsWithCaseEx(s, prefix, len)	(_strnicmp((s), (prefix), (len)) == 0)
+template <typename T, size_t N>
+constexpr bool StrEqualEx(const T *s, const T (&t)[N]) noexcept {
+	return __builtin_memcmp(s, t, N*sizeof(T)) == 0;
+}
+
+template <typename T, size_t N>
+constexpr bool StrStartsWith(const T *s, const T (&t)[N]) noexcept {
+	return __builtin_memcmp(s, t, (N - 1)*sizeof(T)) == 0;
+}
+
+template <size_t N>
+inline bool StrStartsWithCase(const wchar_t *s, const wchar_t (&t)[N]) noexcept {
+	return _wcsnicmp(s, t, N - 1) == 0;
+}
+
+template <size_t N>
+inline bool StrStartsWithCase(const char *s, const char (&t)[N]) noexcept {
+	return _strnicmp(s, t, N - 1) == 0;
+}
 
 inline bool StrToFloat(LPCWSTR str, float *value) noexcept {
 	LPWSTR end;
@@ -281,26 +295,23 @@ extern WCHAR szIniFile[MAX_PATH];
 #define LOAD_LIBRARY_AS_IMAGE_RESOURCE	0x00000020
 #endif
 
-#if (defined(__GNUC__) && __GNUC__ >= 8) || (defined(__clang__) && __clang_major__ >= 18)
-// GCC statement expression
-#define DLLFunction(funcSig, hModule, funcName) __extension__({			\
-	_Pragma("GCC diagnostic push")										\
-	_Pragma("GCC diagnostic ignored \"-Wcast-function-type\"")			\
-	funcSig PP_CONCAT(temp, __LINE__) = (funcSig)GetProcAddress((hModule), (funcName));\
-	_Pragma("GCC diagnostic pop")										\
-	PP_CONCAT(temp, __LINE__);											\
-	})
-#define DLLFunctionEx(funcSig, dllName, funcName) __extension__({		\
-	_Pragma("GCC diagnostic push")										\
-	_Pragma("GCC diagnostic ignored \"-Wcast-function-type\"")			\
-	funcSig PP_CONCAT(temp, __LINE__) = (funcSig)GetProcAddress(GetModuleHandleW(dllName), (funcName));\
-	_Pragma("GCC diagnostic pop")										\
-	PP_CONCAT(temp, __LINE__);											\
-	})
+template<typename T>
+inline T DLLFunction(HMODULE hModule, LPCSTR lpProcName) noexcept {
+	FARPROC function = ::GetProcAddress(hModule, lpProcName);
+#if defined(__clang__) || defined(__GNUC__) || (_MSC_VER >= 1926)
+	return __builtin_bit_cast(T, function);
 #else
-#define DLLFunction(funcSig, hModule, funcName)		(funcSig)GetProcAddress((hModule), (funcName))
-#define DLLFunctionEx(funcSig, dllName, funcName)	(funcSig)GetProcAddress(GetModuleHandleW(dllName), (funcName))
+	static_assert(sizeof(T) == sizeof(function));
+	T fp {};
+	memcpy(&fp, &function, sizeof(T));
+	return fp;
 #endif
+}
+
+template<typename T>
+inline T DLLFunctionEx(LPCWSTR lpDllName, LPCSTR lpProcName) noexcept {
+	return DLLFunction<T>(::GetModuleHandleW(lpDllName), lpProcName);
+}
 
 #ifndef SEE_MASK_NOZONECHECKS
 #define SEE_MASK_NOZONECHECKS		0x00800000		// NTDDI_VERSION >= NTDDI_WINXPSP1
@@ -427,7 +438,6 @@ inline void IniSetBoolEx(LPCWSTR lpSection, LPCWSTR lpName, bool b, bool bDefaul
 #define SaveIniSection(lpSection, lpBuf) \
 	WritePrivateProfileSection(lpSection, lpBuf, szIniFile)
 
-struct IniKeyValueNode;
 struct IniKeyValueNode {
 	IniKeyValueNode *next;
 	UINT hash;
@@ -437,115 +447,81 @@ struct IniKeyValueNode {
 
 // https://en.wikipedia.org/wiki/Sentinel_node
 // https://en.wikipedia.org/wiki/Sentinel_value
-#define IniSectionImplUseSentinelNode	1
+#define IniSectionParserUseSentinelNode	1
 
-struct IniSection {
+struct IniSectionParser {
 	UINT count;
 	UINT capacity;
 	IniKeyValueNode *head;
-#if IniSectionImplUseSentinelNode
+#if IniSectionParserUseSentinelNode
 	IniKeyValueNode *sentinel;
 #endif
 	IniKeyValueNode *nodeList;
+
+	void Init(UINT capacity_) noexcept;
+	void Free() const noexcept {
+		NP2HeapFree(nodeList);
+	}
+	void Clear() noexcept {
+		count = 0;
+		head = nullptr;
+	}
+	bool ParseArray(LPWSTR lpCachedIniSection, BOOL quoted) noexcept;
+	bool Parse(LPWSTR lpCachedIniSection) noexcept;
+	LPCWSTR UnsafeGetValue(LPCWSTR key, int keyLen) noexcept;
+	LPCWSTR GetValueImpl(LPCWSTR key, int keyLen) noexcept {
+		return count ? UnsafeGetValue(key, keyLen) : nullptr;
+	}
+	void GetStringImpl(LPCWSTR key, int keyLen, LPCWSTR lpDefault, LPWSTR lpReturnedString, int cchReturnedString) noexcept;
+	int GetIntImpl(LPCWSTR key, int keyLen, int iDefault) noexcept;
+	bool GetBoolImpl(LPCWSTR key, int keyLen, bool bDefault) noexcept;
+
+	template <size_t N>
+	LPCWSTR GetValue(const wchar_t (&key)[N]) noexcept {
+		return GetValueImpl(key, static_cast<int>(N - 1));
+	}
+	template <size_t N>
+	int GetInt(const wchar_t (&key)[N], int iDefault) noexcept {
+		return GetIntImpl(key, static_cast<int>(N - 1), iDefault);
+	}
+	template <size_t N>
+	bool GetBool(const wchar_t (&key)[N], bool bDefault) noexcept {
+		return GetBoolImpl(key, static_cast<int>(N - 1), bDefault);
+	}
+	template <size_t N, size_t M>
+	void GetString(const wchar_t (&key)[N], LPCWSTR lpDefault, wchar_t (&lpReturnedString)[M]) noexcept {
+		GetStringImpl(key, static_cast<int>(N - 1), lpDefault, lpReturnedString, static_cast<int>(M));
+	}
 };
 
-NP2_inline void IniSectionInit(IniSection *section, UINT capacity) {
-	section->count = 0;
-	section->capacity = capacity;
-	section->head = NULL;
-#if IniSectionImplUseSentinelNode
-	section->nodeList = (IniKeyValueNode *)NP2HeapAlloc((capacity + 1) * sizeof(IniKeyValueNode));
-	section->sentinel = &section->nodeList[capacity];
-#else
-	section->nodeList = (IniKeyValueNode *)NP2HeapAlloc(capacity * sizeof(IniKeyValueNode));
-#endif
-}
-
-NP2_inline void IniSectionFree(IniSection *section) {
-	NP2HeapFree(section->nodeList);
-}
-
-NP2_inline void IniSectionClear(IniSection *section) {
-	section->count = 0;
-	section->head = NULL;
-}
-
-NP2_inline bool IniSectionIsEmpty(const IniSection *section) {
-	return section->count == 0;
-}
-
-bool IniSectionParseArray(IniSection *section, LPWSTR lpCachedIniSection, BOOL quoted);
-bool IniSectionParse(IniSection *section, LPWSTR lpCachedIniSection);
-LPCWSTR IniSectionUnsafeGetValue(IniSection *section, LPCWSTR key, int keyLen);
-
-NP2_inline LPCWSTR IniSectionGetValueImpl(IniSection *section, LPCWSTR key, int keyLen) {
-	return section->count ? IniSectionUnsafeGetValue(section, key, keyLen) : NULL;
-}
-
-void IniSectionGetStringImpl(IniSection *section, LPCWSTR key, int keyLen, LPCWSTR lpDefault, LPWSTR lpReturnedString, int cchReturnedString);
-int IniSectionGetIntImpl(IniSection *section, LPCWSTR key, int keyLen, int iDefault);
-bool IniSectionGetBoolImpl(IniSection *section, LPCWSTR key, int keyLen, bool bDefault);
-
-
-#define IniSectionGetValue(section, key) \
-	IniSectionGetValueImpl(section, key, CSTRLEN(key))
-#define IniSectionGetInt(section, key, iDefault) \
-	IniSectionGetIntImpl(section, key, CSTRLEN(key), (iDefault))
-#define IniSectionGetBool(section, key, bDefault) \
-	IniSectionGetBoolImpl(section, key, CSTRLEN(key), (bDefault))
-#define IniSectionGetString(section, key, lpDefault, lpReturnedString, cchReturnedString) \
-	IniSectionGetStringImpl(section, key, CSTRLEN(key), (lpDefault), (lpReturnedString), (cchReturnedString))
-
-NP2_inline LPCWSTR IniSectionGetValueEx(IniSection *section, LPCWSTR key) {
-	return IniSectionGetValueImpl(section, key, 0);
-}
-
-NP2_inline int IniSectionGetIntEx(IniSection *section, LPCWSTR key, int iDefault) {
-	return IniSectionGetIntImpl(section, key, 0, iDefault);
-}
-
-NP2_inline bool IniSectionGetBoolEx(IniSection *section, LPCWSTR key, bool bDefault) {
-	return IniSectionGetBoolImpl(section, key, 0, bDefault);
-}
-
-NP2_inline void IniSectionGetStringEx(IniSection *section, LPCWSTR key, LPCWSTR lpDefault, LPWSTR lpReturnedString, int cchReturnedString) {
-	IniSectionGetStringImpl(section, key, 0, lpDefault, lpReturnedString, cchReturnedString);
-}
-
-struct IniSectionOnSave {
+struct IniSectionBuilder {
 	LPWSTR next;
+	void SetString(LPCWSTR key, LPCWSTR value) noexcept;
+	void SetQuotedString(LPCWSTR key, LPCWSTR value) noexcept;
+	void SetInt(LPCWSTR key, int i) noexcept {
+		WCHAR tch[16];
+		_ltow(i, tch, 10);
+		SetString(key, tch);
+	}
+	void SetBool(LPCWSTR key, bool b) noexcept {
+		SetString(key, (b ? L"1" : L"0"));
+	}
+	void SetStringEx(LPCWSTR key, LPCWSTR value, LPCWSTR lpDefault) noexcept {
+		if (!StrCaseEqual(value, lpDefault)) {
+			SetString(key, value);
+		}
+	}
+	void SetIntEx(LPCWSTR key, int i, int iDefault) noexcept {
+		if (i != iDefault) {
+			SetInt(key, i);
+		}
+	}
+	void SetBoolEx(LPCWSTR key, bool b, bool bDefault) noexcept {
+		if (b != bDefault) {
+			SetString(key, (b ? L"1" : L"0"));
+		}
+	}
 };
-
-void IniSectionSetString(IniSectionOnSave *section, LPCWSTR key, LPCWSTR value);
-void IniSectionSetQuotedString(IniSectionOnSave *section, LPCWSTR key, LPCWSTR value);
-
-NP2_inline void IniSectionSetInt(IniSectionOnSave *section, LPCWSTR key, int i) {
-	WCHAR tch[16];
-	_ltow(i, tch, 10);
-	IniSectionSetString(section, key, tch);
-}
-
-NP2_inline void IniSectionSetBool(IniSectionOnSave *section, LPCWSTR key, bool b) {
-	IniSectionSetString(section, key, (b ? L"1" : L"0"));
-}
-
-NP2_inline void IniSectionSetStringEx(IniSectionOnSave *section, LPCWSTR key, LPCWSTR value, LPCWSTR lpDefault) {
-	if (!StrCaseEqual(value, lpDefault)) {
-		IniSectionSetString(section, key, value);
-	}
-}
-
-NP2_inline void IniSectionSetIntEx(IniSectionOnSave *section, LPCWSTR key, int i, int iDefault) {
-	if (i != iDefault) {
-		IniSectionSetInt(section, key, i);
-	}
-}
-
-NP2_inline void IniSectionSetBoolEx(IniSectionOnSave *section, LPCWSTR key, bool b, bool bDefault) {
-	if (b != bDefault) {
-		IniSectionSetString(section, key, (b ? L"1" : L"0"));
-	}
-}
 
 #define NP2RegSubKey_ContextMenu	L"*\\shell\\Notepad4"
 #define NP2RegSubKey_JumpList		L"Applications\\Notepad4.exe"
@@ -678,7 +654,7 @@ void DeleteBitmapButton(HWND hwnd, int nCtlId) noexcept;
 #define ComboBox_GetEditSelEnd(hwnd)			HIWORD(ComboBox_GetEditSel(hwnd))
 
 #define StatusSetSimple(hwnd, b)				SendMessage(hwnd, SB_SIMPLE, (b), 0)
-#define StatusSetText(hwnd, nPart, lpszText)	SendMessage(hwnd, SB_SETTEXT, (nPart), (LPARAM)(lpszText))
+#define StatusSetText(hwnd, nPart, lpszText)	SendMessage(hwnd, SB_SETTEXT, (nPart), AsInteger<LPARAM>(lpszText))
 BOOL StatusSetTextID(HWND hwnd, UINT nPart, UINT uID) noexcept;
 int  StatusCalcPaneWidth(HWND hwnd, LPCWSTR lpsz) noexcept;
 
@@ -717,7 +693,9 @@ constexpr bool IsChineseTraditionalSubLang(LANGID subLang) noexcept {
 		|| subLang == SUBLANG_CHINESE_MACAU;
 }
 
-#define GetString(id, pb, cb)	LoadString(g_hInstance, id, pb, cb)
+inline int GetString(UINT uID, LPWSTR lpBuffer, int cchBufferMax) noexcept {
+	return LoadString(g_hInstance, uID, lpBuffer, cchBufferMax);
+}
 #define StrEnd(pStart)			((pStart) + lstrlen(pStart))
 
 /**
@@ -771,13 +749,6 @@ bool PathCreateDeskLnk(LPCWSTR pszDocument);
 bool PathCreateFavLnk(LPCWSTR pszName, LPCWSTR pszTarget, LPCWSTR pszDir);
 void OpenContainingFolder(HWND hwnd, LPCWSTR pszFile, bool bSelect) noexcept;
 
-#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
-#define KnownFolderId_Desktop			FOLDERID_Desktop
-#define KnownFolderId_Documents			FOLDERID_Documents
-#define KnownFolderId_LocalAppData		FOLDERID_LocalAppData
-#define KnownFolderId_ComputerFolder	FOLDERID_ComputerFolder
-#endif
-
 inline void TrimString(LPWSTR lpString) noexcept {
 	StrTrim(lpString, L" ");
 }
@@ -821,25 +792,23 @@ enum {
 // MRU_MAXITEMS * (MAX_PATH + 4)
 #define MAX_INI_SECTION_SIZE_MRU	(8 * 1024)
 
-typedef struct MRULIST {
+struct MRUList {
 	int		iSize;
 	int		iFlags;
 	LPCWSTR szRegKey;
 	LPWSTR pszItems[MRU_MAXITEMS];
-} MRULIST, *PMRULIST, *LPMRULIST;
 
-typedef const MRULIST * LPCMRULIST;
-
-void MRU_Init(LPMRULIST pmru, LPCWSTR pszRegKey, int iFlags);
-void MRU_Add(LPMRULIST pmru, LPCWSTR pszNew);
-void MRU_AddMultiline(LPMRULIST pmru, LPCWSTR pszNew);
-void MRU_Delete(LPMRULIST pmru, int iIndex);
-void MRU_DeleteFileFromStore(LPCMRULIST pmru, LPCWSTR pszFile);
-void MRU_Empty(LPMRULIST pmru, bool save);
-void MRU_Load(LPMRULIST pmru);
-void MRU_Save(LPCMRULIST pmru);
-void MRU_MergeSave(LPMRULIST pmru, bool keep);
-void MRU_AddToCombobox(LPCMRULIST pmru, HWND hwnd);
+	void Init(LPCWSTR pszRegKey, int flags) noexcept;
+	void Add(LPCWSTR pszNew) noexcept;
+	void AddMultiline(LPCWSTR pszNew) noexcept;
+	void Delete(int iIndex) noexcept;
+	void DeleteFileFromStore(LPCWSTR pszFile) const noexcept;
+	void Empty(bool save) noexcept;
+	void Load() noexcept;
+	void Save() const noexcept;
+	void MergeSave(bool keep) noexcept;
+	void AddToCombobox(HWND hwnd) const noexcept;
+};
 
 struct BitmapCache {
 	UINT count;
@@ -847,16 +816,15 @@ struct BitmapCache {
 	bool invalid;
 	int iconIndex[MRU_MAXITEMS];
 	HBITMAP items[MRU_MAXITEMS];
+	void Invalidate() noexcept {
+		invalid = true; // mark all cache as invalid
+	}
+	void StartUse() noexcept {
+		used = 0; // mark all cache as unused
+	}
+	void Empty() noexcept;
+	HBITMAP Get(LPCWSTR path) noexcept;
 };
-
-inline void BitmapCache_Invalidate(BitmapCache *cache) noexcept {
-	cache->invalid = true; // mark all cache as invalid
-}
-inline void BitmapCache_StartUse(BitmapCache *cache) noexcept {
-	cache->used = 0; // mark all cache as unused
-}
-void BitmapCache_Empty(BitmapCache *cache);
-HBITMAP BitmapCache_Get(BitmapCache *cache, LPCWSTR path);
 
 //==== Themed Dialogs =========================================================
 #ifndef DLGTEMPLATEEX
@@ -898,3 +866,10 @@ size_t Base64Decode(uint8_t *output, const uint8_t *src, size_t length) noexcept
 bool GetDoAnimateMinimize() noexcept;
 void MinimizeWndToTray(HWND hwnd) noexcept;
 void RestoreWndFromTray(HWND hwnd) noexcept;
+
+// similar to IID_PPV_ARGS() but without __uuidof() check
+template <class T>
+inline void** AsPPVArgs(T** pp) noexcept {
+	static_assert(__is_base_of(IUnknown, T));
+	return reinterpret_cast<void **>(pp);
+}

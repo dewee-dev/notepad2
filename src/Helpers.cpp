@@ -94,7 +94,7 @@ void IniClearAllSectionEx(LPCWSTR lpszPrefix, LPCWSTR lpszIniFile, bool bDelete)
 	const int len = lstrlen(lpszPrefix);
 
 	while (*p) {
-		if (StrHasPrefixCaseEx(p, lpszPrefix, len)) {
+		if (_wcsnicmp(p, lpszPrefix, len) == 0) {
 			WritePrivateProfileSection(p, value, lpszIniFile);
 		}
 		p = StrEnd(p) + 1;
@@ -105,103 +105,113 @@ void IniClearAllSectionEx(LPCWSTR lpszPrefix, LPCWSTR lpszIniFile, bool bDelete)
 //
 // Manipulation of (cached) ini file sections
 //
-bool IniSectionParseArray(IniSection *section, LPWSTR lpCachedIniSection, BOOL quoted) {
-	IniSectionClear(section);
+void IniSectionParser::Init(UINT capacity_) noexcept {
+	count = 0;
+	capacity = capacity_;
+	head = nullptr;
+#if IniSectionParserUseSentinelNode
+	nodeList = static_cast<IniKeyValueNode *>(NP2HeapAlloc((capacity_ + 1) * sizeof(IniKeyValueNode)));
+	sentinel = &nodeList[capacity_];
+#else
+	nodeList = static_cast<IniKeyValueNode *>(NP2HeapAlloc(capacity_ * sizeof(IniKeyValueNode)));
+#endif
+}
+
+bool IniSectionParser::ParseArray(LPWSTR lpCachedIniSection, BOOL quoted) noexcept {
+	Clear();
 	if (StrIsEmpty(lpCachedIniSection)) {
 		return false;
 	}
 
-	const UINT capacity = section->capacity;
 	LPWSTR p = lpCachedIniSection;
-	UINT count = 0;
+	UINT index = 0;
 
 	do {
 		LPWSTR v = StrChr(p, L'=');
 		if (v != nullptr) {
 			*v++ = L'\0';
 			const int valueLen = lstrlen(v);
-			IniKeyValueNode *node = &section->nodeList[count];
-			node->key = p;
+			IniKeyValueNode &node = nodeList[index];
+			node.key = p;
 			p = v + valueLen + 1;
 			if (quoted && valueLen > 1 && *v == L'\"' && v[valueLen - 1] == L'\"') {
 				v[valueLen - 1] = L'\0';
 				*v++ = L'\0';
 			}
-			node->value = v;
-			++count;
+			node.value = v;
+			++index;
 		} else {
 			p = StrEnd(p) + 1;
 		}
-	} while (*p && count < capacity);
+	} while (*p && index < capacity);
 
-	section->count = count;
-	return count != 0;
+	count = index;
+	return index != 0;
 }
 
-bool IniSectionParse(IniSection *section, LPWSTR lpCachedIniSection) {
-	IniSectionClear(section);
+bool IniSectionParser::Parse(LPWSTR lpCachedIniSection) noexcept {
+	Clear();
 	if (StrIsEmpty(lpCachedIniSection)) {
 		return false;
 	}
 
-	const UINT capacity = section->capacity;
 	LPWSTR p = lpCachedIniSection;
-	UINT count = 0;
+	UINT index = 0;
 
 	do {
 		LPWSTR v = StrChr(p, L'=');
 		if (v != nullptr) {
 			*v++ = L'\0';
 			const UINT keyLen = (UINT)(v - p - 1);
-			IniKeyValueNode *node = &section->nodeList[count];
-			node->hash = keyLen | ((*(const UINT *)p) << 8);
-			node->key = p;
-			node->value = v;
-			++count;
+			IniKeyValueNode &node = nodeList[index];
+			node.hash = keyLen | ((*reinterpret_cast<const UINT *>(p)) << 8);
+			node.key = p;
+			node.value = v;
+			++index;
 			p = v;
 		}
 		p = StrEnd(p) + 1;
-	} while (*p && count < capacity);
+	} while (*p && index < capacity);
 
-	if (count == 0) {
+	if (index == 0) {
 		return false;
 	}
 
-	section->count = count;
-	section->head = &section->nodeList[0];
-	--count;
-#if IniSectionImplUseSentinelNode
-	section->nodeList[count].next = section->sentinel;
+	count = index;
+	head = &nodeList[0];
+	--index;
+#if IniSectionParserUseSentinelNode
+	nodeList[index].next = sentinel;
 #else
-	section->nodeList[count].next = NULL;
+	nodeList[index].next = nullptr;
 #endif
-	while (count != 0) {
-		section->nodeList[count - 1].next = &section->nodeList[count];
-		--count;
+	while (index != 0) {
+		nodeList[index - 1].next = &nodeList[index];
+		--index;
 	}
 	return true;
 }
 
-LPCWSTR IniSectionUnsafeGetValue(IniSection *section, LPCWSTR key, int keyLen) {
+LPCWSTR IniSectionParser::UnsafeGetValue(LPCWSTR key, int keyLen) noexcept {
 	if (keyLen == 0) {
 		keyLen = lstrlen(key);
 	}
 
-	const UINT hash = keyLen | ((*(const UINT *)key) << 8);
-	IniKeyValueNode *node = section->head;
+	const UINT hash = keyLen | ((*reinterpret_cast<const UINT *>(key)) << 8);
+	IniKeyValueNode *node = head;
 	IniKeyValueNode *prev = nullptr;
-#if IniSectionImplUseSentinelNode
-	section->sentinel->hash = hash;
+#if IniSectionParserUseSentinelNode
+	sentinel->hash = hash;
 	while (true) {
 		if (node->hash == hash) {
-			if (node == section->sentinel) {
+			if (node == sentinel) {
 				return nullptr;
 			}
 			if (StrEqual(node->key, key)) {
 				// remove the node
-				--section->count;
+				--count;
 				if (prev == nullptr) {
-					section->head = node->next;
+					head = node->next;
 				} else {
 					prev->next = node->next;
 				}
@@ -215,9 +225,9 @@ LPCWSTR IniSectionUnsafeGetValue(IniSection *section, LPCWSTR key, int keyLen) {
 	do {
 		if (node->hash == hash && StrEqual(node->key, key)) {
 			// remove the node
-			--section->count;
+			--count;
 			if (prev == nullptr) {
-				section->head = node->next;
+				head = node->next;
 			} else {
 				prev->next = node->next;
 			}
@@ -230,22 +240,22 @@ LPCWSTR IniSectionUnsafeGetValue(IniSection *section, LPCWSTR key, int keyLen) {
 #endif
 }
 
-void IniSectionGetStringImpl(IniSection *section, LPCWSTR key, int keyLen, LPCWSTR lpDefault, LPWSTR lpReturnedString, int cchReturnedString) {
-	LPCWSTR value = IniSectionGetValueImpl(section, key, keyLen);
+void IniSectionParser::GetStringImpl(LPCWSTR key, int keyLen, LPCWSTR lpDefault, LPWSTR lpReturnedString, int cchReturnedString) noexcept {
+	LPCWSTR value = GetValueImpl(key, keyLen);
 	// allow empty string value
 	lstrcpyn(lpReturnedString, ((value == nullptr) ? lpDefault : value), cchReturnedString);
 }
 
-int IniSectionGetIntImpl(IniSection *section, LPCWSTR key, int keyLen, int iDefault) {
-	LPCWSTR value = IniSectionGetValueImpl(section, key, keyLen);
+int IniSectionParser::GetIntImpl(LPCWSTR key, int keyLen, int iDefault) noexcept {
+	LPCWSTR value = GetValueImpl(key, keyLen);
 	if (value && CRTStrToInt(value, &keyLen)) {
 		return keyLen;
 	}
 	return iDefault;
 }
 
-bool IniSectionGetBoolImpl(IniSection *section, LPCWSTR key, int keyLen, bool bDefault) {
-	LPCWSTR value = IniSectionGetValueImpl(section, key, keyLen);
+bool IniSectionParser::GetBoolImpl(LPCWSTR key, int keyLen, bool bDefault) noexcept {
+	LPCWSTR value = GetValueImpl(key, keyLen);
 	if (value) {
 		const UINT t = *value - L'0';
 		if (t <= TRUE) {
@@ -255,25 +265,25 @@ bool IniSectionGetBoolImpl(IniSection *section, LPCWSTR key, int keyLen, bool bD
 	return bDefault;
 }
 
-void IniSectionSetString(IniSectionOnSave *section, LPCWSTR key, LPCWSTR value) {
-	LPWSTR p = section->next;
+void IniSectionBuilder::SetString(LPCWSTR key, LPCWSTR value) noexcept {
+	LPWSTR p = next;
 	lstrcpy(p, key);
 	lstrcat(p, L"=");
 	lstrcat(p, value);
 	p = StrEnd(p) + 1;
 	*p = L'\0';
-	section->next = p;
+	next = p;
 }
 
-void IniSectionSetQuotedString(IniSectionOnSave *section, LPCWSTR key, LPCWSTR value) {
-	LPWSTR p = section->next;
+void IniSectionBuilder::SetQuotedString(LPCWSTR key, LPCWSTR value) noexcept {
+	LPWSTR p = next;
 	lstrcpy(p, key);
 	lstrcat(p, L"=\"");
 	lstrcat(p, value);
 	lstrcat(p, L"\"");
 	p = StrEnd(p) + 1;
 	*p = L'\0';
-	section->next = p;
+	next = p;
 }
 
 LPWSTR Registry_GetString(HKEY hKey, LPCWSTR valueName) noexcept {
@@ -284,8 +294,8 @@ LPWSTR Registry_GetString(HKEY hKey, LPCWSTR valueName) noexcept {
 	LSTATUS status = RegQueryValueEx(hKey, valueName, nullptr, &type, nullptr, &size);
 	if (status == ERROR_SUCCESS && type == REG_SZ && size != 0) {
 		size = (size + 1)*sizeof(WCHAR);
-		lpszText = (LPWSTR)NP2HeapAlloc(size);
-		status = RegQueryValueEx(hKey, valueName, nullptr, &type, (LPBYTE)lpszText, &size);
+		lpszText = static_cast<LPWSTR>(NP2HeapAlloc(size));
+		status = RegQueryValueEx(hKey, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(lpszText), &size);
 		if (status != ERROR_SUCCESS || type != REG_SZ || size == 0) {
 			NP2HeapFree(lpszText);
 			lpszText = nullptr;
@@ -297,19 +307,19 @@ LPWSTR Registry_GetString(HKEY hKey, LPCWSTR valueName) noexcept {
 LSTATUS Registry_SetString(HKEY hKey, LPCWSTR valueName, LPCWSTR lpszText) noexcept {
 	DWORD len = lstrlen(lpszText);
 	len = len ? ((len + 1)*sizeof(WCHAR)) : 0;
-	const LSTATUS status = RegSetValueEx(hKey, valueName, 0, REG_SZ, (const BYTE *)lpszText, len);
+	const LSTATUS status = RegSetValueEx(hKey, valueName, 0, REG_SZ, reinterpret_cast<const BYTE *>(lpszText), len);
 	return status;
 }
 
 LSTATUS Registry_SetInt(HKEY hKey, LPCWSTR valueName, DWORD value) noexcept {
-	const LSTATUS status = RegSetValueEx(hKey, valueName, 0, REG_DWORD, (const BYTE *)(&value), sizeof(DWORD));
+	const LSTATUS status = RegSetValueEx(hKey, valueName, 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(DWORD));
 	return status;
 }
 
 #if _WIN32_WINNT < _WIN32_WINNT_VISTA
 LSTATUS Registry_DeleteTree(HKEY hKey, LPCWSTR lpSubKey) noexcept {
 	using RegDeleteTreeSig = LSTATUS (WINAPI *)(HKEY hKey, LPCWSTR lpSubKey);
-	RegDeleteTreeSig pfnRegDeleteTree = DLLFunctionEx(RegDeleteTreeSig, L"advapi32.dll", "RegDeleteTreeW");
+	RegDeleteTreeSig pfnRegDeleteTree = DLLFunctionEx<RegDeleteTreeSig>(L"advapi32.dll", "RegDeleteTreeW");
 
 	LSTATUS status;
 	if (pfnRegDeleteTree != nullptr) {
@@ -334,7 +344,7 @@ int ParseCommaList(LPCWSTR str, int result[], int count) noexcept {
 	int index = 0;
 	while (index < count) {
 		LPWSTR end;
-		result[index] = (int)wcstol(str, &end, 10);
+		result[index] = static_cast<int>(wcstol(str, &end, 10));
 		if (str == end) {
 			break;
 		}
@@ -407,7 +417,7 @@ HBITMAP LoadBitmapFile(LPCWSTR path) noexcept {
 		return nullptr;
 	}
 
-	HBITMAP hbmp = (HBITMAP)LoadImage(nullptr, szTmp, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION | LR_LOADFROMFILE);
+	HBITMAP hbmp = static_cast<HBITMAP>(LoadImage(nullptr, szTmp, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION | LR_LOADFROMFILE));
 	return hbmp;
 }
 
@@ -416,7 +426,7 @@ HBITMAP EnlargeImageForDPI(HBITMAP hbmp, UINT dpi) noexcept {
 	if (dpi > USER_DEFAULT_SCREEN_DPI && GetObject(hbmp, sizeof(BITMAP), &bmp)) {
 		const int width = MulDiv(dpi, bmp.bmWidth, USER_DEFAULT_SCREEN_DPI);
 		const int height = MulDiv(dpi, bmp.bmHeight, USER_DEFAULT_SCREEN_DPI);
-		HBITMAP hCopy = (HBITMAP)CopyImage(hbmp, IMAGE_BITMAP, width, height, LR_COPYRETURNORG | LR_COPYDELETEORG);
+		HBITMAP hCopy = static_cast<HBITMAP>(CopyImage(hbmp, IMAGE_BITMAP, width, height, LR_COPYRETURNORG | LR_COPYDELETEORG));
 		if (hCopy != nullptr) {
 			hbmp = hCopy;
 		}
@@ -435,7 +445,7 @@ HBITMAP ResizeImageForCurrentDPI(HBITMAP hbmp) noexcept {
 		}
 		// keep aspect ratio
 		const int width = MulDiv(height, bmp.bmWidth, bmp.bmHeight);
-		HBITMAP hCopy = (HBITMAP)CopyImage(hbmp, IMAGE_BITMAP, width, height, LR_COPYRETURNORG | LR_COPYDELETEORG);
+		HBITMAP hCopy = static_cast<HBITMAP>(CopyImage(hbmp, IMAGE_BITMAP, width, height, LR_COPYRETURNORG | LR_COPYDELETEORG));
 		if (hCopy != nullptr) {
 #if 0
 			BITMAP bmp2;
@@ -501,7 +511,7 @@ HRESULT PrivateSetCurrentProcessExplicitAppUserModelID(LPCWSTR AppID) noexcept {
 #else
 	using SetCurrentProcessExplicitAppUserModelIDSig = HRESULT (WINAPI *)(LPCWSTR AppID);
 	SetCurrentProcessExplicitAppUserModelIDSig pfnSetCurrentProcessExplicitAppUserModelID =
-		DLLFunctionEx(SetCurrentProcessExplicitAppUserModelIDSig, L"shell32.dll", "SetCurrentProcessExplicitAppUserModelID");
+		DLLFunctionEx<SetCurrentProcessExplicitAppUserModelIDSig>(L"shell32.dll", "SetCurrentProcessExplicitAppUserModelID");
 	if (pfnSetCurrentProcessExplicitAppUserModelID) {
 		return pfnSetCurrentProcessExplicitAppUserModelID(AppID);
 	}
@@ -545,7 +555,7 @@ bool BitmapMergeAlpha(HBITMAP hbmp, COLORREF crDest) noexcept {
 #if NP2_USE_AVX2
 			#define BitmapMergeAlpha_Tag	"sse4 2x1"
 			const ULONG count = (bmp.bmHeight * bmp.bmWidth) / 2;
-			uint64_t *prgba = (uint64_t *)bmp.bmBits;
+			uint64_t *prgba = static_cast<uint64_t *>(bmp.bmBits);
 
 			const __m128i i16x8Back = rgba_to_bgra_epi16x8_sse4_si32(crDest);
 			for (ULONG x = 0; x < count; x++, prgba++) {
@@ -559,7 +569,7 @@ bool BitmapMergeAlpha(HBITMAP hbmp, COLORREF crDest) noexcept {
 #elif NP2_USE_SSE2
 			#define BitmapMergeAlpha_Tag	"sse2 1x1"
 			const ULONG count = bmp.bmHeight * bmp.bmWidth;
-			uint32_t *prgba = (uint32_t *)bmp.bmBits;
+			uint32_t *prgba = static_cast<uint32_t *>(bmp.bmBits);
 
 			const __m128i i16x4Back = rgba_to_bgra_epi16_sse2_si32(crDest);
 			for (ULONG x = 0; x < count; x++, prgba++) {
@@ -573,7 +583,7 @@ bool BitmapMergeAlpha(HBITMAP hbmp, COLORREF crDest) noexcept {
 #else
 			#define BitmapMergeAlpha_Tag	"scalar"
 			const ULONG count = bmp.bmHeight * bmp.bmWidth;
-			RGBQUAD *prgba = (RGBQUAD *)bmp.bmBits;
+			RGBQUAD *prgba = static_cast<RGBQUAD *>(bmp.bmBits);
 
 			const BYTE red = GetRValue(crDest);
 			const BYTE green = GetGValue(crDest);
@@ -613,7 +623,7 @@ bool BitmapAlphaBlend(HBITMAP hbmp, COLORREF crDest, BYTE alpha) noexcept {
 #if 1
 			#define BitmapAlphaBlend_Tag	"avx2 4x1"
 			const ULONG count = (bmp.bmHeight * bmp.bmWidth) / 4;
-			__m128i *prgba = (__m128i *)bmp.bmBits;
+			__m128i *prgba = static_cast<__m128i *>(bmp.bmBits);
 
 			const __m256i i16x16Alpha = _mm256_broadcastw_epi16(_mm_cvtsi32_si128(alpha));
 			const __m256i i16x16Back = _mm256_broadcastq_epi64(_mm_mullo_epi16(rgba_to_bgra_epi16_sse4_si32(crDest), mm_xor_alpha_epi16(_mm256_castsi256_si128(i16x16Alpha))));
@@ -631,7 +641,7 @@ bool BitmapAlphaBlend(HBITMAP hbmp, COLORREF crDest, BYTE alpha) noexcept {
 #else
 			#define BitmapAlphaBlend_Tag	"sse4 2x1"
 			const ULONG count = (bmp.bmHeight * bmp.bmWidth) / 2;
-			uint64_t *prgba = (uint64_t *)bmp.bmBits;
+			uint64_t *prgba = static_cast<uint64_t *>(bmp.bmBits);
 
 			const __m128i i16x8Alpha = _mm_broadcastw_epi16(_mm_cvtsi32_si128(alpha));
 			const __m128i i16x8Back = _mm_mullo_epi16(rgba_to_bgra_epi16x8_sse4_si32(crDest), mm_xor_alpha_epi16(i16x8Alpha));
@@ -642,13 +652,13 @@ bool BitmapAlphaBlend(HBITMAP hbmp, COLORREF crDest, BYTE alpha) noexcept {
 				i16x8Fore = mm_div_epu16_by_255(i16x8Fore);
 				i16x8Fore = _mm_blend_epi16(origin, i16x8Fore, 0x77);
 				i16x8Fore = pack_color_epi16_sse2_si128(i16x8Fore);
-				_mm_storel_epi64((__m128i *)prgba, i16x8Fore);
+				_mm_storel_epi64(reinterpret_cast<__m128i *>(prgba), i16x8Fore);
 			}
 #endif // NP2_USE_AVX2
 #elif NP2_USE_SSE2
 			#define BitmapAlphaBlend_Tag	"sse2 1x4"
 			const ULONG count = (bmp.bmHeight * bmp.bmWidth) / 4;
-			__m128i *prgba = (__m128i *)bmp.bmBits;
+			__m128i *prgba = static_cast<__m128i *>(bmp.bmBits);
 
 			const __m128i i16x8Alpha = _mm_shuffle_epi32(mm_setlo_alpha_epi16(alpha), 0x44);
 			__m128i i16x8Back = _mm_shuffle_epi32(rgba_to_bgra_epi16_sse2_si32(crDest), 0x44);
@@ -681,7 +691,7 @@ bool BitmapAlphaBlend(HBITMAP hbmp, COLORREF crDest, BYTE alpha) noexcept {
 #else
 			#define BitmapAlphaBlend_Tag	"scalar"
 			const ULONG count = bmp.bmHeight * bmp.bmWidth;
-			RGBQUAD *prgba = (RGBQUAD *)bmp.bmBits;
+			RGBQUAD *prgba = static_cast<RGBQUAD *>(bmp.bmBits);
 
 			const WORD red = GetRValue(crDest) * (255 ^ alpha);
 			const WORD green = GetGValue(crDest) * (255 ^ alpha);
@@ -711,7 +721,7 @@ bool BitmapGrayScale(HBITMAP hbmp) noexcept {
 	if (GetObject(hbmp, sizeof(BITMAP), &bmp)) {
 		if (bmp.bmBitsPixel == 32) {
 			const ULONG count = bmp.bmHeight * bmp.bmWidth;
-			RGBQUAD *prgba = (RGBQUAD *)bmp.bmBits;
+			RGBQUAD *prgba = static_cast<RGBQUAD *>(bmp.bmBits);
 
 			for (ULONG x = 0; x < count; x++) {
 				// gray = 0.299*red + 0.587*green + 0.114*blue
@@ -770,7 +780,7 @@ static int CALLBACK EnumFontFamExProc(CONST LOGFONT *plf, CONST TEXTMETRIC *ptm,
 	UNREFERENCED_PARAMETER(ptm);
 	UNREFERENCED_PARAMETER(fontType);
 
-	*((PBOOL)lParam) = TRUE;
+	*(AsPointer<PBOOL>(lParam)) = TRUE;
 	return FALSE;
 }
 
@@ -783,7 +793,7 @@ BOOL IsFontAvailable(LPCWSTR lpszFontName) noexcept {
 	lf.lfCharSet = DEFAULT_CHARSET;
 
 	HDC hDC = GetDC(nullptr);
-	EnumFontFamiliesEx(hDC, &lf, EnumFontFamExProc, (LPARAM)&fFound, 0);
+	EnumFontFamiliesEx(hDC, &lf, EnumFontFamExProc, AsInteger<LPARAM>(&fFound), 0);
 	ReleaseDC(nullptr, hDC);
 
 	return fFound;
@@ -797,7 +807,7 @@ void SetClipData(HWND hwnd, LPCWSTR pszData) noexcept {
 	if (OpenClipboard(hwnd)) {
 		EmptyClipboard();
 		HANDLE hData = GlobalAlloc(GHND, sizeof(WCHAR) * (lstrlen(pszData) + 1));
-		WCHAR *pData = (WCHAR *)GlobalLock(hData);
+		WCHAR *pData = static_cast<WCHAR *>(GlobalLock(hData));
 		lstrcpyn(pData, pszData, (int)(GlobalSize(hData) / sizeof(WCHAR)));
 		GlobalUnlock(hData);
 		SetClipboardData(CF_UNICODETEXT, hData);
@@ -1071,7 +1081,7 @@ void ResizeDlg_Size(HWND hwnd, LPARAM lParam, int *cx, int *cy) noexcept {
 
 void ResizeDlg_GetMinMaxInfo(HWND hwnd, LPARAM lParam) noexcept {
 	const RESIZEDLG *pm = static_cast<RESIZEDLG *>(GetProp(hwnd, RESIZEDLG_PROP_KEY));
-	LPMINMAXINFO lpmmi = reinterpret_cast<LPMINMAXINFO>(lParam);
+	LPMINMAXINFO lpmmi = AsPointer<LPMINMAXINFO>(lParam);
 #if NP2_ENABLE_RESIZEDLG_TEMP_FIX
 	const UINT dpi = GetWindowDPI(hwnd);
 	const UINT old = pm->dpi;
@@ -1154,7 +1164,7 @@ HDWP DeferCtlPos(HDWP hdwp, HWND hwndDlg, int nCtlId, int dx, int dy, UINT uFlag
 	HWND hwndCtl = GetDlgItem(hwndDlg, nCtlId);
 	RECT rc;
 	GetWindowRect(hwndCtl, &rc);
-	MapWindowPoints(nullptr, hwndDlg, (LPPOINT)&rc, 2);
+	MapWindowPoints(nullptr, hwndDlg, reinterpret_cast<LPPOINT>(&rc), 2);
 	if (uFlags & SWP_NOSIZE) {
 		return DeferWindowPos(hdwp, hwndCtl, nullptr, rc.left + dx, rc.top + dy, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
 	}
@@ -1165,7 +1175,7 @@ void ResizeDlgCtl(HWND hwndDlg, int nCtlId, int dx, int dy) noexcept {
 	HWND hwndCtl = GetDlgItem(hwndDlg, nCtlId);
 	RECT rc;
 	GetWindowRect(hwndCtl, &rc);
-	MapWindowPoints(nullptr, hwndDlg, (LPPOINT)&rc, 2);
+	MapWindowPoints(nullptr, hwndDlg, reinterpret_cast<LPPOINT>(&rc), 2);
 	SetWindowPos(hwndCtl, nullptr, 0, 0, rc.right - rc.left + dx, rc.bottom - rc.top + dy, SWP_NOZORDER | SWP_NOMOVE);
 	InvalidateRect(hwndCtl, nullptr, TRUE);
 }
@@ -1206,7 +1216,7 @@ static LRESULT CALLBACK MultilineEditProc(HWND hwnd, UINT umsg, WPARAM wParam, L
 			}
 			// TODO: find first control when hwnd is last tab item on this dialog.
 			if (hwndCtl != hwnd) {
-				PostMessage(hwndParent, WM_NEXTDLGCTL, (WPARAM)hwndCtl, TRUE);
+				PostMessage(hwndParent, WM_NEXTDLGCTL, AsInteger<WPARAM>(hwndCtl), TRUE);
 			}
 		}
 		break;
@@ -1244,7 +1254,7 @@ void MakeBitmapButton(HWND hwnd, int nCtlId, HINSTANCE hInstance, int wBmpId) no
 	}
 #endif
 	HWND hwndCtl = GetDlgItem(hwnd, nCtlId);
-	HBITMAP hBmp = (HBITMAP)LoadImage(hInstance, MAKEINTRESOURCE(wBmpId), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+	HBITMAP hBmp = static_cast<HBITMAP>(LoadImage(hInstance, MAKEINTRESOURCE(wBmpId), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
 	hBmp = ResizeImageForCurrentDPI(hBmp);
 	BITMAP bmp;
 	GetObject(hBmp, sizeof(BITMAP), &bmp);
@@ -1336,7 +1346,7 @@ LRESULT SendWMSize(HWND hwnd) noexcept {
 BOOL StatusSetTextID(HWND hwnd, UINT nPart, UINT uID) noexcept {
 	WCHAR szText[256];
 	GetString(uID, szText, COUNTOF(szText));
-	return (BOOL)SendMessage(hwnd, SB_SETTEXT, nPart, (LPARAM)szText);
+	return static_cast<BOOL>(SendMessage(hwnd, SB_SETTEXT, nPart, AsInteger<LPARAM>(szText)));
 }
 
 //=============================================================================
@@ -1345,8 +1355,8 @@ BOOL StatusSetTextID(HWND hwnd, UINT nPart, UINT uID) noexcept {
 //
 int StatusCalcPaneWidth(HWND hwnd, LPCWSTR lpsz) noexcept {
 	HDC hdc = GetDC(hwnd);
-	HFONT hfont = (HFONT)SendMessage(hwnd, WM_GETFONT, 0, 0);
-	HFONT hfold = (HFONT)SelectObject(hdc, hfont);
+	HFONT hfont = GetWindowFont(hwnd);
+	HFONT hfold = SelectFont(hdc, hfont);
 	const int mmode = SetMapMode(hdc, MM_TEXT);
 
 	SIZE size;
@@ -1370,7 +1380,7 @@ int Toolbar_GetButtons(HWND hwnd, int cmdBase, LPWSTR lpszButtons, int cchButton
 
 	for (int i = 0; i < count && len < maxCch; i++) {
 		TBBUTTON tbb;
-		SendMessage(hwnd, TB_GETBUTTON, i, (LPARAM)&tbb);
+		SendMessage(hwnd, TB_GETBUTTON, i, AsInteger<LPARAM>(&tbb));
 		const int iCmd = (tbb.idCommand == 0) ? 0 : tbb.idCommand - cmdBase + 1;
 		len += wsprintf(lpszButtons + len, L"%i ", iCmd);
 	}
@@ -1397,10 +1407,10 @@ int Toolbar_SetButtons(HWND hwnd, LPCWSTR lpszButtons, LPCTBBUTTON ptbb, int ctb
 	--ctbb;
 	while (true) {
 		LPWSTR end;
-		int iCmd = (int)wcstol(p, &end, 10);
+		int iCmd = static_cast<int>(wcstol(p, &end, 10));
 		if (p != end) {
 			iCmd = clamp(iCmd, 0, ctbb);
-			SendMessage(hwnd, TB_ADDBUTTONS, 1, (LPARAM)&ptbb[iCmd]);
+			SendMessage(hwnd, TB_ADDBUTTONS, 1, AsInteger<LPARAM>(&ptbb[iCmd]));
 			p = end;
 			++count;
 			//if (count == MAX_TOOLBAR_ITEM_COUNT_WITH_SEPARATOR) {
@@ -1420,7 +1430,7 @@ int Toolbar_SetButtons(HWND hwnd, LPCWSTR lpszButtons, LPCTBBUTTON ptbb, int ctb
 //
 bool IsCmdEnabled(HWND hwnd, UINT uId) noexcept {
 	HMENU hmenu = GetMenu(hwnd);
-	SendMessage(hwnd, WM_INITMENU, (WPARAM)hmenu, 0);
+	SendMessage(hwnd, WM_INITMENU, AsInteger<WPARAM>(hmenu), 0);
 	const UINT ustate = GetMenuState(hmenu, uId, MF_BYCOMMAND);
 
 	if (ustate == 0xFFFFFFFF) {
@@ -1534,7 +1544,7 @@ bool PathGetRealPath(HANDLE hFile, LPCWSTR lpszSrc, LPWSTR lpszDest) noexcept {
 			using GetFinalPathNameByHandleSig = DWORD (WINAPI *)(HANDLE hFile, LPWSTR lpszFilePath, DWORD cchFilePath, DWORD dwFlags);
 			static GetFinalPathNameByHandleSig pfnGetFinalPathNameByHandle = nullptr;
 			if (pfnGetFinalPathNameByHandle == nullptr) {
-				pfnGetFinalPathNameByHandle = DLLFunctionEx(GetFinalPathNameByHandleSig, L"kernel32.dll", "GetFinalPathNameByHandleW");
+				pfnGetFinalPathNameByHandle = DLLFunctionEx<GetFinalPathNameByHandleSig>(L"kernel32.dll", "GetFinalPathNameByHandleW");
 			}
 			DWORD cch = pfnGetFinalPathNameByHandle(hFile, path, COUNTOF(path), FILE_NAME_OPENED);
 #endif
@@ -1542,10 +1552,10 @@ bool PathGetRealPath(HANDLE hFile, LPCWSTR lpszSrc, LPWSTR lpszDest) noexcept {
 			if (closing) {
 				CloseHandle(hFile);
 			}
-			if (cch != 0 && StrHasPrefix(path, L"\\\\?\\")) {
+			if (cch != 0 && StrStartsWith(path, L"\\\\?\\")) {
 				cch -= CSTRLEN(L"\\\\?\\");
 				WCHAR *p = path + CSTRLEN(L"\\\\?\\");
-				if (StrHasPrefix(p, L"UNC\\")) {
+				if (StrStartsWith(p, L"UNC\\")) {
 					cch -= 2;
 					p += 2;
 					*p = L'\\'; // replace 'C' with backslash
@@ -1561,10 +1571,10 @@ bool PathGetRealPath(HANDLE hFile, LPCWSTR lpszSrc, LPWSTR lpszDest) noexcept {
 	DWORD cch = GetFullPathName(lpszSrc, COUNTOF(path), path, nullptr);
 	if (cch > 0 && cch < COUNTOF(path)) {
 		WCHAR *p = path;
-		if (StrHasPrefix(path, L"\\\\?\\")) {
+		if (StrStartsWith(path, L"\\\\?\\")) {
 			cch -= CSTRLEN(L"\\\\?\\");
 			p += CSTRLEN(L"\\\\?\\");
-			if (StrHasPrefix(p, L"UNC\\")) {
+			if (StrStartsWith(p, L"UNC\\")) {
 				cch -= 2;
 				p += 2;
 				*p = L'\\'; // replace 'C' with backslash
@@ -1601,7 +1611,7 @@ static inline BOOL PathGetFileId(HANDLE hFile, FILE_ID_INFO *fileId) noexcept {
 		using GetFileInformationByHandleExSig = BOOL (WINAPI *)(HANDLE hFile, int FileInformationClass, LPVOID lpFileInformation, DWORD dwBufferSize);
 		static GetFileInformationByHandleExSig pfnGetFileInformationByHandleEx = nullptr;
 		if (pfnGetFileInformationByHandleEx == nullptr) {
-			pfnGetFileInformationByHandleEx = DLLFunctionEx(GetFileInformationByHandleExSig, L"kernel32.dll", "GetFileInformationByHandleEx");
+			pfnGetFileInformationByHandleEx = DLLFunctionEx<GetFileInformationByHandleExSig>(L"kernel32.dll", "GetFileInformationByHandleEx");
 		}
 		success = pfnGetFileInformationByHandleEx(hFile, FileIdInfo, fileId, sizeof(FILE_ID_INFO));
 #endif
@@ -1669,7 +1679,7 @@ void PathRelativeToApp(LPCWSTR lpszSrc, LPWSTR lpszDest, DWORD dwAttrTo, bool bU
 		if (bUnexpandMyDocs) {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 			LPWSTR wchUserFiles = nullptr;
-			if (S_OK != SHGetKnownFolderPath(KnownFolderId_Documents, KF_FLAG_DEFAULT, nullptr, &wchUserFiles)) {
+			if (S_OK != SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &wchUserFiles)) {
 				return;
 			}
 #else
@@ -1717,10 +1727,10 @@ void PathRelativeToApp(LPCWSTR lpszSrc, LPWSTR lpszDest, DWORD dwAttrTo, bool bU
 void PathAbsoluteFromApp(LPCWSTR lpszSrc, LPWSTR lpszDest, bool bExpandEnv) noexcept {
 	WCHAR wchPath[MAX_PATH];
 
-	if (StrHasPrefix(lpszSrc, L"%CSIDL:MYDOCUMENTS%")) {
+	if (StrStartsWith(lpszSrc, L"%CSIDL:MYDOCUMENTS%")) {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 		LPWSTR pszPath = nullptr;
-		if (S_OK != SHGetKnownFolderPath(KnownFolderId_Documents, KF_FLAG_DEFAULT, nullptr, &pszPath)) {
+		if (S_OK != SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &pszPath)) {
 			return;
 		}
 		lpszSrc += CSTRLEN("%CSIDL:MYDOCUMENTS%");
@@ -1779,10 +1789,10 @@ bool PathGetLnkPath(LPCWSTR pszLnkFile, LPWSTR pszResPath) {
 	WCHAR tchPath[MAX_PATH];
 	tchPath[0] = L'\0';
 
-	if (SUCCEEDED(CoCreateInstance(IID_IShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLink, reinterpret_cast<LPVOID *>(&psl)))) {
+	if (SUCCEEDED(CoCreateInstance(IID_IShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLink, AsPPVArgs(&psl)))) {
 		IPersistFile *ppf;
 
-		if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, reinterpret_cast<void **>(&ppf)))) {
+		if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, AsPPVArgs(&ppf)))) {
 			if (SUCCEEDED(ppf->Load(pszLnkFile, STGM_READ))) {
 				hr = psl->GetPath(tchPath, COUNTOF(tchPath), nullptr, 0);
 			}
@@ -1825,12 +1835,12 @@ bool PathCreateDeskLnk(LPCWSTR pszDocument) {
 	PathQuoteSpaces(tchDocTemp);
 
 	WCHAR tchArguments[MAX_PATH + 16];
-	StrCpyExW(tchArguments, L"-n ");
+	StrCpyEx(tchArguments, L"-n ");
 	lstrcat(tchArguments, tchDocTemp);
 
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 	LPWSTR tchLinkDir = nullptr;
-	if (S_OK != SHGetKnownFolderPath(KnownFolderId_Desktop, KF_FLAG_DEFAULT, nullptr, &tchLinkDir)) {
+	if (S_OK != SHGetKnownFolderPath(FOLDERID_Desktop, KF_FLAG_DEFAULT, nullptr, &tchLinkDir)) {
 		return false;
 	}
 #else
@@ -1861,10 +1871,10 @@ bool PathCreateDeskLnk(LPCWSTR pszDocument) {
 
 	IShellLink *psl;
 	bool bSucceeded = false;
-	if (SUCCEEDED(CoCreateInstance(IID_IShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLink, reinterpret_cast<LPVOID *>(&psl)))) {
+	if (SUCCEEDED(CoCreateInstance(IID_IShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLink, AsPPVArgs(&psl)))) {
 		IPersistFile *ppf;
 
-		if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, reinterpret_cast<void **>(&ppf)))) {
+		if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, AsPPVArgs(&ppf)))) {
 			psl->SetPath(tchExeFile);
 			psl->SetArguments(tchArguments);
 			psl->SetDescription(tchDescription);
@@ -1904,10 +1914,10 @@ bool PathCreateFavLnk(LPCWSTR pszName, LPCWSTR pszTarget, LPCWSTR pszDir) {
 
 	IShellLink *psl;
 	bool bSucceeded = false;
-	if (SUCCEEDED(CoCreateInstance(IID_IShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLink, reinterpret_cast<LPVOID *>(&psl)))) {
+	if (SUCCEEDED(CoCreateInstance(IID_IShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLink, AsPPVArgs(&psl)))) {
 		IPersistFile *ppf;
 
-		if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, reinterpret_cast<void **>(&ppf)))) {
+		if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, AsPPVArgs(&ppf)))) {
 			psl->SetPath(pszTarget);
 			if (SUCCEEDED(ppf->Save(tchLnkFileName, TRUE))) {
 				bSucceeded = true;
@@ -1950,11 +1960,11 @@ void OpenContainingFolder(HWND hwnd, LPCWSTR pszFile, bool bSelect) noexcept {
 		PIDLIST_ABSOLUTE pidlEntry = path ? ILCreateFromPath(path) : nullptr;
 		if (pidlEntry) {
 			hr = SHOpenFolderAndSelectItems(pidl, 1, (PCUITEMID_CHILD_ARRAY)(&pidlEntry), 0);
-			CoTaskMemFree((LPVOID)pidlEntry);
+			CoTaskMemFree(pidlEntry);
 		} else if (!bSelect) {
 #if 0
 			// Use an invalid item to open the folder?
-			hr = SHOpenFolderAndSelectItems(pidl, 1, (LPCITEMIDLIST *)(&pidl), 0);
+			hr = SHOpenFolderAndSelectItems(pidl, 1, (PCUITEMID_CHILD_ARRAY)(&pidl), 0);
 #else
 			SHELLEXECUTEINFO sei;
 			memset(&sei, 0, sizeof(SHELLEXECUTEINFO));
@@ -1964,7 +1974,7 @@ void OpenContainingFolder(HWND hwnd, LPCWSTR pszFile, bool bSelect) noexcept {
 			sei.hwnd = hwnd;
 			//sei.lpVerb = L"explore";
 			sei.lpVerb = L"open";
-			sei.lpIDList = (void *)pidl;
+			sei.lpIDList = pidl;
 			sei.nShow = SW_SHOW;
 
 			const BOOL result = ShellExecuteEx(&sei);
@@ -1974,7 +1984,7 @@ void OpenContainingFolder(HWND hwnd, LPCWSTR pszFile, bool bSelect) noexcept {
 			// open parent folder and select the folder
 			hr = SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
 		}
-		CoTaskMemFree((LPVOID)pidl);
+		CoTaskMemFree(pidl);
 		if (hr == S_OK) {
 			return;
 		}
@@ -1986,7 +1996,7 @@ void OpenContainingFolder(HWND hwnd, LPCWSTR pszFile, bool bSelect) noexcept {
 	}
 
 	// open a new explorer window every time
-	LPWSTR szParameters = (LPWSTR)NP2HeapAlloc((lstrlen(path) + 64) * sizeof(WCHAR));
+	LPWSTR szParameters = static_cast<LPWSTR>(NP2HeapAlloc((lstrlen(path) + 64) * sizeof(WCHAR)));
 	lstrcpy(szParameters, bSelect ? L"/select," : L"");
 	lstrcat(szParameters, L"\"");
 	lstrcat(szParameters, path);
@@ -2240,7 +2250,7 @@ LPWSTR GetDlgItemFullText(HWND hwndDlg, int nCtlId) noexcept {
 		return nullptr;
 	}
 	len += 1;
-	LPWSTR buffer = (LPWSTR)NP2HeapAlloc(len*sizeof(WCHAR));
+	LPWSTR buffer = static_cast<LPWSTR>(NP2HeapAlloc(len*sizeof(WCHAR)));
 	GetWindowText(hwndDlg, buffer, len);
 	return buffer;
 }
@@ -2263,7 +2273,7 @@ int GetDlgItemTextA2W(UINT uCP, HWND hDlg, int nIDDlgItem, LPSTR lpString, int n
 void SetDlgItemTextA2W(UINT uCP, HWND hDlg, int nIDDlgItem, LPCSTR lpString) noexcept {
 	const int len = lpString ? (int)strlen(lpString) : 0;
 	if (len) {
-		LPWSTR wsz = (LPWSTR)NP2HeapAlloc((len + 1) * sizeof(WCHAR));
+		LPWSTR wsz = static_cast<LPWSTR>(NP2HeapAlloc((len + 1) * sizeof(WCHAR)));
 		MultiByteToWideChar(uCP, 0, lpString, -1, wsz, len);
 		SetDlgItemText(hDlg, nIDDlgItem, wsz);
 		NP2HeapFree(wsz);
@@ -2275,7 +2285,7 @@ void SetDlgItemTextA2W(UINT uCP, HWND hDlg, int nIDDlgItem, LPCSTR lpString) noe
 void ComboBox_AddStringA2W(UINT uCP, HWND hwnd, LPCSTR lpString) noexcept {
 	const int len = lpString ? (int)strlen(lpString) : 0;
 	if (len) {
-		LPWSTR wsz = (LPWSTR)NP2HeapAlloc((len + 1) * sizeof(WCHAR));
+		LPWSTR wsz = static_cast<LPWSTR>(NP2HeapAlloc((len + 1) * sizeof(WCHAR)));
 		MultiByteToWideChar(uCP, 0, lpString, -1, wsz, len);
 		ComboBox_AddString(hwnd, wsz);
 		NP2HeapFree(wsz);
@@ -2286,15 +2296,15 @@ void ComboBox_AddStringA2W(UINT uCP, HWND hwnd, LPCSTR lpString) noexcept {
 //
 // MRU functions
 //
-void MRU_Init(LPMRULIST pmru, LPCWSTR pszRegKey, int iFlags) {
-	pmru->iSize = 0;
-	pmru->iFlags = iFlags;
-	pmru->szRegKey = pszRegKey;
-	memset(NP2_void_pointer(pmru->pszItems), 0, sizeof(pmru->pszItems));
-	MRU_Load(pmru);
+void MRUList::Init(LPCWSTR pszRegKey, int flags) noexcept {
+	iSize = 0;
+	iFlags = flags;
+	szRegKey = pszRegKey;
+	memset(AsVoidPointer(pszItems), 0, sizeof(pszItems));
+	Load();
 }
 
-static inline bool MRU_Equal(int flags, LPCWSTR psz1, LPCWSTR psz2) {
+static inline bool MRU_Equal(int flags, LPCWSTR psz1, LPCWSTR psz2) noexcept {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 	return CompareStringOrdinal(psz1, -1, psz2, -1, flags & MRUFlags_FilePath) == CSTR_EQUAL;
 #else
@@ -2302,12 +2312,12 @@ static inline bool MRU_Equal(int flags, LPCWSTR psz1, LPCWSTR psz2) {
 #endif
 }
 
-void MRU_Add(LPMRULIST pmru, LPCWSTR pszNew) {
-	const int flags = pmru->iFlags;
+void MRUList::Add(LPCWSTR pszNew) noexcept {
+	const int flags = iFlags;
 	LPWSTR tchItem = nullptr;
 	int i;
 	for (i = 0; i < MRU_MAXITEMS; i++) {
-		WCHAR * const item = pmru->pszItems[i];
+		WCHAR * const item = pszItems[i];
 		if (item == nullptr) {
 			break;
 		}
@@ -2318,43 +2328,43 @@ void MRU_Add(LPMRULIST pmru, LPCWSTR pszNew) {
 	}
 	if (i == MRU_MAXITEMS) {
 		--i;
-		LocalFree(pmru->pszItems[i]);
-	} else if (i == pmru->iSize) {
-		pmru->iSize += 1;
+		LocalFree(pszItems[i]);
+	} else if (i == iSize) {
+		iSize += 1;
 	}
 	for (; i > 0; i--) {
-		pmru->pszItems[i] = pmru->pszItems[i - 1];
+		pszItems[i] = pszItems[i - 1];
 	}
 	if (tchItem == nullptr) {
 		tchItem = StrDup(pszNew);
 	}
-	pmru->pszItems[0] = tchItem;
+	pszItems[0] = tchItem;
 }
 
-void MRU_AddMultiline(LPMRULIST pmru, LPCWSTR pszNew) {
+void MRUList::AddMultiline(LPCWSTR pszNew) noexcept {
 	const int len = lstrlen(pszNew);
-	LPWSTR lpszEsc = (LPWSTR)NP2HeapAlloc((2*len + 1)*sizeof(WCHAR));
+	LPWSTR lpszEsc = static_cast<LPWSTR>(NP2HeapAlloc((2*len + 1)*sizeof(WCHAR)));
 	AddBackslashW(lpszEsc, pszNew);
-	MRU_Add(pmru, lpszEsc);
+	Add(lpszEsc);
 	NP2HeapFree(lpszEsc);
 }
 
-void MRU_Delete(LPMRULIST pmru, int iIndex) {
-	if (iIndex < 0 || iIndex >= pmru->iSize) {
+void MRUList::Delete(int iIndex) noexcept {
+	if (iIndex < 0 || iIndex >= iSize) {
 		return;
 	}
-	LocalFree(pmru->pszItems[iIndex]);
-	pmru->pszItems[iIndex] = NULL;
-	pmru->iSize -= 1;
-	for (int i = iIndex; i < pmru->iSize; i++) {
-		pmru->pszItems[i] = pmru->pszItems[i + 1];
-		pmru->pszItems[i + 1] = NULL;
+	LocalFree(pszItems[iIndex]);
+	pszItems[iIndex] = nullptr;
+	iSize -= 1;
+	for (int i = iIndex; i < iSize; i++) {
+		pszItems[i] = pszItems[i + 1];
+		pszItems[i + 1] = nullptr;
 	}
 }
 
-void MRU_DeleteFileFromStore(LPCMRULIST pmru, LPCWSTR pszFile) {
-	MRULIST mruStore;
-	MRU_Init(&mruStore, pmru->szRegKey, pmru->iFlags);
+void MRUList::DeleteFileFromStore(LPCWSTR pszFile) const noexcept {
+	MRUList mruStore;
+	mruStore.Init(szRegKey, iFlags);
 	int deleted = 0;
 
 	for (int index = 0; index < mruStore.iSize; ) {
@@ -2362,10 +2372,10 @@ void MRU_DeleteFileFromStore(LPCMRULIST pmru, LPCWSTR pszFile) {
 		if (PathEqual(path, pszFile)) {
 			deleted += 1;
 			LocalFree(mruStore.pszItems[index]);
-			mruStore.pszItems[index] = NULL;
+			mruStore.pszItems[index] = nullptr;
 			for (int i = index; i < mruStore.iSize - 1; i++) {
 				mruStore.pszItems[i] = mruStore.pszItems[i + 1];
-				mruStore.pszItems[i + 1] = NULL;
+				mruStore.pszItems[i + 1] = nullptr;
 			}
 		} else {
 			index++;
@@ -2373,156 +2383,150 @@ void MRU_DeleteFileFromStore(LPCMRULIST pmru, LPCWSTR pszFile) {
 	}
 
 	mruStore.iSize -= deleted;
-	MRU_Save(&mruStore);
-	MRU_Empty(&mruStore, false);
+	mruStore.Save();
+	mruStore.Empty(false);
 }
 
-void MRU_Empty(LPMRULIST pmru, bool save) {
-	for (int i = 0; i < pmru->iSize; i++) {
-		LocalFree(pmru->pszItems[i]);
-		pmru->pszItems[i] = NULL;
+void MRUList::Empty(bool save) noexcept {
+	for (int i = 0; i < iSize; i++) {
+		LocalFree(pszItems[i]);
+		pszItems[i] = nullptr;
 	}
-	pmru->iSize = 0;
+	iSize = 0;
 	if (save && StrNotEmpty(szIniFile)) {
-		IniClearSection(pmru->szRegKey);
+		IniClearSection(szRegKey);
 	}
 }
 
-void MRU_Load(LPMRULIST pmru) {
+void MRUList::Load() noexcept {
 	if (StrIsEmpty(szIniFile)) {
 		return;
 	}
 
-	IniSection section;
-	WCHAR *pIniSectionBuf = (WCHAR *)NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_MRU);
-	const int cchIniSection = (int)(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
-	IniSection * const pIniSection = &section;
-	const int iFlags = pmru->iFlags;
+	IniSectionParser section;
+	WCHAR *pIniSectionBuf = static_cast<WCHAR *>(NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_MRU));
+	const DWORD cchIniSection = static_cast<DWORD>(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
 
-	IniSectionInit(pIniSection, MRU_MAXITEMS);
-	LoadIniSection(pmru->szRegKey, pIniSectionBuf, cchIniSection);
-	IniSectionParseArray(pIniSection, pIniSectionBuf, iFlags & MRUFlags_QuoteValue);
-	const UINT count = pIniSection->count;
+	section.Init(MRU_MAXITEMS);
+	LoadIniSection(szRegKey, pIniSectionBuf, cchIniSection);
+	section.ParseArray(pIniSectionBuf, iFlags & MRUFlags_QuoteValue);
 	UINT n = 0;
 
-	for (UINT i = 0; i < count; i++) {
-		const IniKeyValueNode *node = &pIniSection->nodeList[i];
-		LPCWSTR tchItem = node->value;
+	for (UINT i = 0; i < section.count; i++) {
+		LPCWSTR tchItem = section.nodeList[i].value;
 		if (StrNotEmpty(tchItem)) {
 			WCHAR tchPath[MAX_PATH];
 			if ((iFlags & MRUFlags_FilePath) != 0 && PathIsRelative(tchItem)) {
 				PathAbsoluteFromApp(tchItem, tchPath, true);
 				tchItem = tchPath;
 			}
-			pmru->pszItems[n++] = StrDup(tchItem);
+			pszItems[n++] = StrDup(tchItem);
 		}
 	}
 
-	pmru->iSize = n;
-	IniSectionFree(pIniSection);
+	iSize = n;
+	section.Free();
 	NP2HeapFree(pIniSectionBuf);
 }
 
-void MRU_Save(LPCMRULIST pmru) {
+void MRUList::Save() const noexcept {
 	if (StrIsEmpty(szIniFile)) {
 		return;
 	}
-	if (pmru->iSize <= 0) {
-		IniClearSection(pmru->szRegKey);
+	if (iSize <= 0) {
+		IniClearSection(szRegKey);
 		return;
 	}
 
 	WCHAR tchName[16];
-	WCHAR *pIniSectionBuf = (WCHAR *)NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_MRU);
-	IniSectionOnSave section = { pIniSectionBuf };
-	IniSectionOnSave * const pIniSection = &section;
-	const int iFlags = pmru->iFlags;
+	WCHAR *pIniSectionBuf = static_cast<WCHAR *>(NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_MRU));
+	IniSectionBuilder section = { pIniSectionBuf };
 
-	for (int i = 0; i < pmru->iSize; i++) {
-		LPCWSTR tchItem = pmru->pszItems[i];
+	for (int i = 0; i < iSize; i++) {
+		LPCWSTR tchItem = pszItems[i];
 		if (StrNotEmpty(tchItem)) {
 			wsprintf(tchName, L"%02i", i + 1);
 			if (iFlags & MRUFlags_QuoteValue) {
-				IniSectionSetQuotedString(pIniSection, tchName, tchItem);
+				section.SetQuotedString(tchName, tchItem);
 			} else {
 				WCHAR tchPath[MAX_PATH];
 				if (iFlags & MRUFlags_RelativePath) {
 					PathRelativeToApp(tchItem, tchPath, 0, true, iFlags & MRUFlags_PortableMyDocs);
 					tchItem = tchPath;
 				}
-				IniSectionSetString(pIniSection, tchName, tchItem);
+				section.SetString(tchName, tchItem);
 			}
 		}
 	}
 
-	SaveIniSection(pmru->szRegKey, pIniSectionBuf);
+	SaveIniSection(szRegKey, pIniSectionBuf);
 	NP2HeapFree(pIniSectionBuf);
 }
 
-void MRU_MergeSave(LPMRULIST pmru, bool keep) {
+void MRUList::MergeSave(bool keep) noexcept {
 	if (!keep || StrIsEmpty(szIniFile)) {
-		MRU_Empty(pmru, true);
+		Empty(true);
 		return;
 	}
-	if (pmru->iSize <= 0) {
+	if (iSize <= 0) {
 		return;
 	}
 
-	MRULIST mruBase;
-	MRU_Init(&mruBase, pmru->szRegKey, pmru->iFlags);
-	for (int i = pmru->iSize - 1; i >= 0; i--) {
-		MRU_Add(&mruBase, pmru->pszItems[i]);
+	MRUList mruBase;
+	mruBase.Init(szRegKey, iFlags);
+	for (int i = iSize - 1; i >= 0; i--) {
+		mruBase.Add(pszItems[i]);
 	}
 
-	MRU_Save(&mruBase);
-	MRU_Empty(&mruBase, false);
-	MRU_Empty(pmru, false);
+	mruBase.Save();
+	mruBase.Empty(false);
+	Empty(false);
 }
 
-void MRU_AddToCombobox(LPCMRULIST pmru, HWND hwnd) {
-	for (int i = 0; i < pmru->iSize; i++) {
-		LPCWSTR str = pmru->pszItems[i];
+void MRUList::AddToCombobox(HWND hwnd) const noexcept {
+	for (int i = 0; i < iSize; i++) {
+		LPCWSTR str = pszItems[i];
 		ComboBox_AddString(hwnd, str);
 	}
 }
 
-void BitmapCache_Empty(BitmapCache *cache) {
-	for (UINT i = 0; i < cache->count; i++) {
-		DeleteObject(cache->items[i]);
+void BitmapCache::Empty() noexcept {
+	for (UINT i = 0; i < count; i++) {
+		DeleteObject(items[i]);
 	}
-	memset(cache, 0, sizeof(BitmapCache));
+	memset(this, 0, sizeof(BitmapCache));
 }
 
-HBITMAP BitmapCache_Get(BitmapCache *cache, LPCWSTR path) {
-	if (cache->invalid) {
-		BitmapCache_Empty(cache);
+HBITMAP BitmapCache::Get(LPCWSTR path) noexcept {
+	if (invalid) {
+		Empty();
 	}
 
 	SHFILEINFO shfi;
-	HIMAGELIST imageList = (HIMAGELIST)SHGetFileInfo(path, FILE_ATTRIBUTE_NORMAL, &shfi, sizeof(SHFILEINFO), SHGFI_USEFILEATTRIBUTES | SHGFI_SYSICONINDEX | SHGFI_SMALLICON);
+	HIMAGELIST imageList = AsPointer<HIMAGELIST>(SHGetFileInfo(path, FILE_ATTRIBUTE_NORMAL, &shfi, sizeof(SHFILEINFO), SHGFI_USEFILEATTRIBUTES | SHGFI_SYSICONINDEX | SHGFI_SMALLICON));
 	const int iIcon = shfi.iIcon;
 	UINT index = 0;
-	for (; index < cache->count; index++) {
-		if (cache->iconIndex[index] == iIcon) {
+	for (; index < count; index++) {
+		if (iconIndex[index] == iIcon) {
 			break;
 		}
 	}
-	if (index == cache->count) {
-		static_assert(sizeof(cache->used)*8 >= MRU_MAXITEMS);
+	if (index == count) {
+		static_assert(sizeof(used)*8 >= MRU_MAXITEMS);
 		if (index < MRU_MAXITEMS) {
-			cache->count += 1;
+			count += 1;
 		} else {
 			// find first zero bit in used, omitted zero check as used can't be UINT32_MAX
-			// index = __builtin_stdc_trailing_ones(cache->used);
-			index = np2_ctz(~cache->used);
-			DeleteObject(cache->items[index]);
-			cache->items[index] = NULL;
+			// index = __builtin_stdc_trailing_ones(used);
+			index = np2_ctz(~used);
+			DeleteObject(items[index]);
+			items[index] = nullptr;
 		}
-		cache->iconIndex[index] = iIcon;
+		iconIndex[index] = iIcon;
 	}
 
-	cache->used |= 1U << index;
-	HBITMAP hbmp = cache->items[index];
+	used |= 1U << index;
+	HBITMAP hbmp = items[index];
 	if (hbmp == nullptr) {
 		HDC bitmapDC = CreateCompatibleDC(nullptr);
 		int width = 0;
@@ -2534,7 +2538,7 @@ HBITMAP BitmapCache_Get(BitmapCache *cache, LPCWSTR path) {
 		ImageList_Draw(imageList, iIcon, bitmapDC, 0, 0, ILD_TRANSPARENT);
 		SelectBitmap(bitmapDC, oldBitmap);
 		DeleteDC(bitmapDC);
-		cache->items[index] = hbmp;
+		items[index] = hbmp;
 	}
 
 	return hbmp;
@@ -2652,10 +2656,10 @@ DLGTEMPLATE *LoadThemedDialogTemplate(LPCWSTR lpDialogTemplateID, HINSTANCE hIns
 	}
 
 	HGLOBAL hRsrcMem = LoadResource(hInstance, hRsrc);
-	const DLGTEMPLATE *pRsrcMem = (DLGTEMPLATE *)LockResource(hRsrcMem);
+	const DLGTEMPLATE *pRsrcMem = static_cast<DLGTEMPLATE *>(LockResource(hRsrcMem));
 	const UINT dwTemplateSize = (UINT)SizeofResource(hInstance, hRsrc);
 
-	DLGTEMPLATE *pTemplate = dwTemplateSize ? (DLGTEMPLATE *)NP2HeapAlloc(dwTemplateSize + LF_FACESIZE * 2) : nullptr;
+	DLGTEMPLATE *pTemplate = dwTemplateSize ? static_cast<DLGTEMPLATE *>(NP2HeapAlloc(dwTemplateSize + LF_FACESIZE * 2)) : nullptr;
 	if (pTemplate == nullptr) {
 		FreeResource(hRsrcMem);
 		return nullptr;
@@ -2754,7 +2758,7 @@ UINT_PTR CALLBACK OpenSaveFileDlgHookProc(HWND hwnd, UINT umsg, WPARAM wParam, L
 
 	switch (umsg) {
 	case WM_NOTIFY: {
-		LPOFNOTIFY pOFNOTIFY = (LPOFNOTIFY)lParam;
+		LPOFNOTIFY pOFNOTIFY = AsPointer<LPOFNOTIFY>(lParam);
 		switch (pOFNOTIFY->hdr.code) {
 		case CDN_INITDONE:
 			// OFN_OVERWRITEPROMPT is tested before OFNHookProc making "D:\d" like folder path trigger a prompt.
@@ -2829,7 +2833,7 @@ unsigned int UnSlash(char *s, UINT cpEdit) noexcept {
 				s++;
 			}
 			if (value) {
-				WCHAR val[2] = { (WCHAR)value, 0 };
+				const WCHAR val[2] = { static_cast<WCHAR>(value), 0 };
 				char ch[8];
 				WideCharToMultiByte(cpEdit, 0, val, -1, ch, sizeof(ch), nullptr, nullptr);
 				const char *pch = ch;

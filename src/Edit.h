@@ -102,16 +102,16 @@ enum {
 	EditWrapSymbol_DefaultValue = EditWrapSymbolBefore_NearBorder,
 };
 
-void	Edit_ReleaseResources(void) noexcept;
+void	Edit_ReleaseResources() noexcept;
 void	EditCreate(HWND hwndParent) noexcept;
-void	EditSetNewText(LPCSTR lpstrText, DWORD cbText, Sci_Line lineCount);
+void	EditSetNewText(LPCSTR lpstrText, DWORD cbText, Sci_Line lineCount) noexcept;
 
-static inline void EditSetEmptyText(void) {
+static inline void EditSetEmptyText() noexcept{
 	EditSetNewText("", 0, 1);
 }
 
 bool	EditConvertText(UINT cpSource, UINT cpDest, bool bSetSavePoint) noexcept;
-void	EditConvertToLargeMode(void);
+void	EditConvertToLargeMode() noexcept;
 void	EditReplaceDocument(HANDLE pdoc) noexcept;
 
 char*	EditGetClipboardText(HWND hwnd) noexcept; // LocalFree()
@@ -128,7 +128,7 @@ constexpr int GetSettingsEOLMode(int mode) noexcept {
 
 struct EditFileIOStatus;
 void 	EditDetectEOLMode(LPCSTR lpData, DWORD cbData, EditFileIOStatus &status) noexcept;
-bool	EditLoadFile(LPWSTR pszFile, EditFileIOStatus &status);
+bool	EditLoadFile(LPWSTR pszFile, EditFileIOStatus &status) noexcept;
 bool	EditSaveFile(HWND hwnd, LPCWSTR pszFile, int saveFlag, EditFileIOStatus &status) noexcept;
 
 void	EditReplaceMainSelection(Sci_Position cchText, LPCSTR pszText) noexcept;
@@ -161,7 +161,7 @@ void	EditSpacesToTabs(int nTabWidth, bool bOnlyIndentingWS) noexcept;
 
 void	EditMoveUp() noexcept;
 void	EditMoveDown() noexcept;
-void	EditModifyLines(LPCWSTR pwszPrefix, LPCWSTR pwszAppend, bool skipEmptyLine);
+void	EditModifyLines(LPCWSTR pwszPrefix, LPCWSTR pwszAppend, bool skipEmptyLine) noexcept;
 void	EditAlignText(EditAlignMode nMode) noexcept;
 void	EditEncloseSelection(LPCWSTR pwszOpen, LPCWSTR pwszClose) noexcept;
 void	EditToggleLineComments(LPCWSTR pwszComment, int commentFlag) noexcept;
@@ -188,7 +188,7 @@ void	EditSelectLines(bool currentBlock, bool lineSelection) noexcept;
 HWND	EditFindReplaceDlg(HWND hwnd, EDITFINDREPLACE *lpefr, bool bReplace) noexcept;
 void	EditFindNext(const EDITFINDREPLACE *lpefr, bool fExtendSelection) noexcept;
 void	EditFindPrev(const EDITFINDREPLACE *lpefr, bool fExtendSelection) noexcept;
-void	EditFindAll(const EDITFINDREPLACE *lpefr, bool selectAll);
+void	EditFindAll(const EDITFINDREPLACE *lpefr, bool selectAll) noexcept;
 bool	EditReplace(HWND hwnd, const EDITFINDREPLACE *lpefr) noexcept;
 bool	EditReplaceAll(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bShowInfo) noexcept;
 bool	EditReplaceAllInSelection(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bShowInfo) noexcept;
@@ -235,29 +235,31 @@ enum {
 	MarkerBitmask_Bookmark = 1 << MarkerNumber_Bookmark,
 };
 
-struct EditMarkAllStatus {
+struct EditMarkAll {
 	bool pending;
 	bool ignoreSelectionUpdate;
 	bool bookmarkForFindAll;
-	int findFlag;
+	int markFlag;
 	int incrementSize;			// increment search size
-	Sci_Position iSelCount;		// length for pszText
+	Sci_Position length;		// length for pszText
 	LPSTR pszText;				// pattern or text to find
 	double duration;			// search duration in milliseconds
 	Sci_Position matchCount;	// total match count
 	Sci_Position lastMatchPos;	// last matching position
-	Sci_Position iStartPos;		// previous stop position
-	Sci_Line bookmarkLine;		// previous bookmark line
+	Sci_Position prevStopPos;	// previous stop position
+	Sci_Line prevBookmarkLine;	// previous bookmark line
 	StopWatch watch;			// used to dynamic compute increment size
+
+	void Reset(int findFlag, Sci_Position iSelCount, LPSTR text) noexcept;
+	void Clear() noexcept {
+		Reset(0, 0, nullptr);
+	}
+	void Start(BOOL bChanged, int findFlag, Sci_Position iSelCount, LPSTR text) noexcept;
+	void Continue(HANDLE timer) noexcept;
+	void Stop() noexcept;
+	void MarkAll(BOOL bChanged, bool matchCase, bool wholeWord, bool bookmark) noexcept;
 };
 
-void EditMarkAll_ClearEx(int findFlag, Sci_Position iSelCount, LPSTR pszText);
-NP2_inline void EditMarkAll_Clear(void) {
-	EditMarkAll_ClearEx(0, 0, NULL);
-}
-void EditMarkAll_Start(BOOL bChanged, int findFlag, Sci_Position iSelCount, LPSTR pszText);
-void EditMarkAll_Continue(EditMarkAllStatus *status, HANDLE timer);
-void EditMarkAll(BOOL bChanged, bool matchCase, bool wholeWord, bool bookmark);
 void EditToggleBookmarkAt(Sci_Position iPos) noexcept;
 void EditBookmarkSelectAll() noexcept;
 
@@ -355,13 +357,13 @@ extern const uint32_t DefaultWordCharSet[8];
 void	EditCompleteUpdateConfig() noexcept;
 bool	IsDocWordChar(uint32_t ch) noexcept;
 bool	IsAutoCompletionWordCharacter(uint32_t ch) noexcept;
-void	EditCompleteWord(int iCondition, bool autoInsert);
+void	EditCompleteWord(int iCondition, bool autoInsert) noexcept;
 bool	EditIsOpenBraceMatched(Sci_Position pos, Sci_Position startPos) noexcept;
 void	EditAutoCloseBraceQuote(int ch, AutoInsertCharacter what) noexcept;
-void	EditAutoCloseXMLTag(void);
+void	EditAutoCloseXMLTag() noexcept;
 void	EditAutoIndent() noexcept;
-void	EditToggleCommentLine(bool alternative);
-void	EditToggleCommentBlock(bool alternative);
+void	EditToggleCommentLine(bool alternative) noexcept;
+void	EditToggleCommentBlock(bool alternative) noexcept;
 void	EditInsertScriptShebangLine() noexcept;
 
 enum CallTipType {
@@ -389,7 +391,7 @@ struct CallTipInfo {
 	//COLORREF foreColor;
 };
 void	EditShowCallTip(Sci_Position position) noexcept;
-void	EditClickCallTip(HWND hwnd);
+void	EditClickCallTip(HWND hwnd) noexcept;
 
 #define NCP_DEFAULT					1
 #define NCP_UTF8					2
@@ -462,20 +464,20 @@ struct NP2ENCODING {
 inline BOOL GetLegacyACP(UINT *acp) noexcept {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 	return GetLocaleInfoEx(LOCALE_NAME_SYSTEM_DEFAULT, LOCALE_IUSEUTF8LEGACYACP | LOCALE_RETURN_NUMBER,
-		(LPWSTR)(acp), sizeof(UINT) / sizeof(WCHAR));
+		reinterpret_cast<LPWSTR>(acp), sizeof(UINT) / sizeof(WCHAR));
 #else
 	return GetLocaleInfoW(LOCALE_SYSTEM_DEFAULT, LOCALE_IUSEUTF8LEGACYACP | LOCALE_RETURN_NUMBER,
-		(LPWSTR)(acp), sizeof(UINT) / sizeof(WCHAR));
+		reinterpret_cast<LPWSTR>(acp), sizeof(UINT) / sizeof(WCHAR));
 #endif
 }
 
 inline BOOL GetLegacyOEMCP(UINT *oemcp) noexcept {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 	return GetLocaleInfoEx(LOCALE_NAME_SYSTEM_DEFAULT, LOCALE_IUSEUTF8LEGACYOEMCP | LOCALE_RETURN_NUMBER,
-		(LPWSTR)(oemcp), sizeof(UINT) / sizeof(WCHAR));
+		reinterpret_cast<LPWSTR>(oemcp), sizeof(UINT) / sizeof(WCHAR));
 #else
 	return GetLocaleInfoW(LOCALE_SYSTEM_DEFAULT, LOCALE_IUSEUTF8LEGACYOEMCP | LOCALE_RETURN_NUMBER,
-		(LPWSTR)(oemcp), sizeof(UINT) / sizeof(WCHAR));
+		reinterpret_cast<LPWSTR>(oemcp), sizeof(UINT) / sizeof(WCHAR));
 #endif
 }
 
@@ -525,7 +527,7 @@ int 	Encoding_Match(LPCWSTR pwszTest) noexcept;
 int 	Encoding_MatchA(LPCSTR pchTest) noexcept;
 bool	Encoding_IsValid(int iEncoding) noexcept;
 int		Encoding_GetIndex(UINT codePage) noexcept;
-int		Encoding_GetAnsiIndex(void) noexcept;
+int		Encoding_GetAnsiIndex() noexcept;
 void	Encoding_AddToTreeView(HWND hwnd, int idSel, bool bRecodeOnly) noexcept;
 bool	Encoding_GetFromTreeView(HWND hwnd, int *pidEncoding, bool bQuiet) noexcept;
 #if 0
@@ -544,7 +546,7 @@ bool	IsUTF7(const char *pTest, DWORD nLength) noexcept;
 #define BOM_UTF16BE		0xFFFE
 inline bool IsUTF8Signature(const char *p) noexcept {
 	//return p[0] == '\xEF' && p[1] == '\xBB' && p[2] == '\xBF';
-	return (*((const UINT *)p) & 0xFFFFFF) == BOM_UTF8;
+	return (*(reinterpret_cast<const UINT *>(p)) & 0xFFFFFF) == BOM_UTF8;
 }
 
 constexpr BOOL Encoding_HasBOM(int iEncoding) noexcept {
@@ -554,7 +556,7 @@ constexpr BOOL Encoding_HasBOM(int iEncoding) noexcept {
 }
 
 LPSTR RecodeAsUTF8(LPSTR lpData, DWORD *cbData, UINT codePage, DWORD flags) noexcept;
-int EditDetermineEncoding(LPCWSTR pszFile, char *lpData, DWORD cbData, int *encodingFlag);
+int EditDetermineEncoding(LPCWSTR pszFile, char *lpData, DWORD cbData, int *encodingFlag) noexcept;
 bool IsStringCaseSensitiveW(LPCWSTR pszTextW) noexcept;
 bool IsStringCaseSensitiveA(LPCSTR pszText) noexcept;
 
@@ -585,7 +587,7 @@ struct EditTabSettings {
 	bool	schemeUseGlobalTabSettings;
 };
 
-typedef struct FILEVARS {
+struct EditFileVars {
 	int 	mask;
 	int 	iTabWidth;
 	int 	iIndentWidth;
@@ -596,21 +598,20 @@ typedef struct FILEVARS {
 	int 	iEncoding;
 	char	tchEncoding[32];
 	char	tchMode[32];
-} FILEVARS, *LPFILEVARS;
+	void Init(LPCSTR lpData, DWORD cbData) noexcept;
+	void Apply() noexcept;
+	int GetEncoding() const noexcept {
+		return (mask & FV_ENCODING) ? iEncoding : CPI_NONE;
+	}
+};
 
-typedef const FILEVARS * LPCFILEVARS;
 extern EditTabSettings tabSettings;
-extern FILEVARS fvCurFile;
+extern EditFileVars fvCurFile;
 
 void	EditSetWrapStartIndent(int tabWidth, int indentWidth) noexcept;
 void	EditSetWrapIndentMode(int tabWidth, int indentWidth) noexcept;
-void	FileVars_Init(LPCSTR lpData, DWORD cbData, LPFILEVARS lpfv);
-void	FileVars_Apply(LPFILEVARS lpfv);
-bool	FileVars_ParseInt(LPCSTR pszData, LPCSTR pszName, int *piValue);
-bool	FileVars_ParseStr(LPCSTR pszData, LPCSTR pszName, char *pszValue, int cchValue);
-inline int FileVars_GetEncoding(LPCFILEVARS lpfv) noexcept {
-	return (lpfv->mask & FV_ENCODING) ? lpfv->iEncoding : CPI_NONE;
-}
+bool	FileVars_ParseInt(LPCSTR pszData, LPCSTR pszName, int *piValue) noexcept;
+bool	FileVars_ParseStr(LPCSTR pszData, LPCSTR pszName, char *pszValue, int cchValue) noexcept;
 
 enum FOLD_ACTION {
 	FOLD_ACTION_FOLD	= SC_FOLDACTION_CONTRACT,

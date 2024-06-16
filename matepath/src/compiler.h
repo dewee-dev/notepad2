@@ -2,41 +2,31 @@
 // See License.txt for details about distribution and modification.
 #pragma once
 
-#if defined(__cplusplus) || (defined(__STDC_VERSION__) && __STDC_VERSION__ > 201710L)
-#undef NULL
-#define NULL	nullptr
-#else
-//#include <stdbool.h>
-typedef _Bool	bool;
-#define false	0
-#define true	1
-#define nullptr	NULL
+template <typename T, typename V>
+inline T AsPointer(V value) noexcept {
+#if defined(__clang__)
+	static_assert(__is_pointer(T) && __is_integral(V) && sizeof(V) == sizeof(nullptr));
 #endif
+	return reinterpret_cast<T>(value);
+}
+
+template <typename T, typename V>
+inline T AsInteger(V value) noexcept {
+#if defined(__clang__)
+	static_assert(__is_pointer(V) && __is_integral(T));
+#endif
+	return reinterpret_cast<T>(value);
+}
 
 // suppress clang-tidy [bugprone-multi-level-implicit-pointer-conversion] warning
-#if defined(__cplusplus)
-#define NP2_void_pointer(expr)		(reinterpret_cast<void *>(expr))
-#else
-#define NP2_void_pointer(expr)		((void *)(expr))
-#endif
+template <typename T>
+inline void* AsVoidPointer(T** pp) noexcept {
+	return reinterpret_cast<void *>(pp);
+}
 
-#if (defined(__GNUC__) || defined(__clang__)) && !defined(__cplusplus)
-// https://stackoverflow.com/questions/19452971/array-size-macro-that-rejects-pointers
-// trigger error for pointer: GCC: void value not ignored as it ought to be. Clang: invalid operands to binary expression.
-#define COUNTOF(ar)	_Generic(&(ar), __typeof__((ar)[0]) **: (void)0, default: _countof(ar))
-// trigger warning for non-literal string: GCC: division by zero [-Wdiv-by-zero]. Clang: division by zero is undefined [-Wdivision-by-zero].
-#if !defined(__clang__)
-#define CSTRLEN(s)	(__builtin_constant_p(s) ? (_countof(s) - 1) : (1 / 0))
-#else
-// Clang complains when above CSTRLEN() is used in certain macros, such as EDITLEXER_HOLE()
-#define CSTRLEN(s)	(COUNTOF(s) - 1)
-#endif
-#else
-// C++ template based version of _countof(), or plain old unsafe version
+// C++ template based version of _countof()
 #define COUNTOF(ar)	_countof(ar)
 #define CSTRLEN(s)	(_countof(s) - 1)
-#endif
-#define STRSIZE(s)	(COUNTOF(s) * sizeof((s)[0]))
 
 // https://docs.microsoft.com/en-us/cpp/preprocessor/pragma-directives-and-the-pragma-keyword
 #if defined(__GNUC__) || defined(__clang__)
@@ -52,12 +42,6 @@ typedef _Bool	bool;
 #define NP2_IGNORE_WARNING_DEPRECATED_DECLARATIONS	_Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
 #else
 #define NP2_IGNORE_WARNING_DEPRECATED_DECLARATIONS	__pragma(warning(disable: 4996))
-#endif
-
-#if defined(__cplusplus) || defined(_MSC_VER)
-	#define NP2_inline	inline
-#else
-	#define NP2_inline	static inline
 #endif
 
 #define PP_CONCAT_(x, y)	x##y

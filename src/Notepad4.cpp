@@ -253,14 +253,14 @@ static LPWSTR lpFileArg = nullptr;
 static LPWSTR lpSchemeArg = nullptr;
 static LPWSTR lpMatchArg = nullptr;
 static LPWSTR lpEncodingArg = nullptr;
-MRULIST mruFile;
-MRULIST mruFind;
-MRULIST mruReplace;
+MRUList mruFile;
+MRUList mruFind;
+MRUList mruReplace;
 static BitmapCache bitmapCache;
 
 DWORD	dwLastIOError;
 WCHAR	szCurFile[MAX_PATH + 40];
-FILEVARS	fvCurFile;
+EditFileVars fvCurFile;
 static bool bDocumentModified = false;
 static bool bReadOnlyFile = false;
 bool bReadOnlyMode = false; // save call to SciCall_GetReadOnly()
@@ -302,7 +302,7 @@ static struct WatchFileInformation {
 
 static EDITFINDREPLACE efrData;
 bool	bReplaceInitialized = false;
-EditMarkAllStatus editMarkAllStatus;
+EditMarkAll editMarkAll;
 HANDLE idleTaskTimer;
 
 static EditSortFlag iSortOptions = EditSortFlag_Ascending;
@@ -436,21 +436,21 @@ TripleBoolean flagUseSystemMRU		= TripleBoolean_NotSet;
 static RelaunchElevatedFlag flagRelaunchElevated = RelaunchElevatedFlag_None;
 static bool	flagDisplayHelp			= false;
 
-static inline bool IsDocumentModified(void) noexcept {
+static inline bool IsDocumentModified() noexcept {
 	return bDocumentModified || iCurrentEncoding != iOriginalEncoding;
 }
 
-static inline bool IsTopMost(void) noexcept {
+static inline bool IsTopMost() noexcept {
 	return (bAlwaysOnTop || flagAlwaysOnTop == TripleBoolean_True) && flagAlwaysOnTop != TripleBoolean_False;
 }
 
 // temporary fix for https://github.com/zufuliu/notepad4/issues/77: force InvalidateStyleRedraw().
-static inline void InvalidateStyleRedraw(void) noexcept {
+static inline void InvalidateStyleRedraw() noexcept {
 	SciCall_SetViewEOL(bViewEOLs);
 }
 
 // temporary fix for https://github.com/zufuliu/notepad4/issues/134: Direct2D on arm32
-static inline int GetDefualtRenderingTechnology(void) noexcept {
+static inline int GetDefualtRenderingTechnology() noexcept {
 #if defined(__arm__) || defined(_ARM_) || defined(_M_ARM)
 	return SC_TECHNOLOGY_DIRECTWRITERETAIN;
 #else
@@ -635,7 +635,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 
 #if _WIN32_WINNT < _WIN32_WINNT_WIN8
 	// see LoadD2D() in PlatWin.cxx
-	kSystemLibraryLoadFlags = (DLLFunctionEx(FARPROC, L"kernel32.dll", "SetDefaultDllDirectories") != nullptr) ? LOAD_LIBRARY_SEARCH_SYSTEM32 : 0;
+	kSystemLibraryLoadFlags = (DLLFunctionEx<FARPROC>(L"kernel32.dll", "SetDefaultDllDirectories") != nullptr) ? LOAD_LIBRARY_SEARCH_SYSTEM32 : 0;
 #endif
 
 #if NP2_ENABLE_APP_LOCALIZATION_DLL
@@ -663,22 +663,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
 
 	// create the timer first, to make flagMatchText working.
 	HANDLE timer = idleTaskTimer = WaitableTimer_Create();
-	QueryPerformanceFrequency(&editMarkAllStatus.watch.freq);
+	QueryPerformanceFrequency(&editMarkAll.watch.freq);
 	InitInstance(hInstance, nShowCmd);
 	hAccMain = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDR_MAINWND));
 	hAccFindReplace = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDR_ACCFINDREPLACE));
 	MSG msg;
 
 	while (true) {
-		if (editMarkAllStatus.pending) {
+		if (editMarkAll.pending) {
 			WaitableTimer_Set(timer, WaitableTimer_IdleTaskDelayTime);
-			while (editMarkAllStatus.pending && WaitableTimer_Continue(timer)) {
+			while (editMarkAll.pending && WaitableTimer_Continue(timer)) {
 				if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 					DispatchMessageMain(&msg);
 				}
 			}
-			if (editMarkAllStatus.pending) {
-				EditMarkAll_Continue(&editMarkAllStatus, timer);
+			if (editMarkAll.pending) {
+				editMarkAll.Continue(timer);
 			}
 		}
 		if (GetMessage(&msg, nullptr, 0, 0)) {
@@ -1033,14 +1033,7 @@ static inline void NP2RestoreWind(HWND hwnd) noexcept {
 	ShowOwnedPopups(hwnd, TRUE);
 }
 
-static inline void EditMarkAll_Stop(void) {
-	editMarkAllStatus.pending = false;
-	editMarkAllStatus.matchCount = 0;
-	WaitableTimer_Set(idleTaskTimer, 0);
-	EditMarkAll_Clear();
-}
-
-static inline void ExitApplication(HWND hwnd) {
+static inline void ExitApplication(HWND hwnd) noexcept {
 	if (FileSave(FileSaveFlag_Ask)) {
 		DestroyWindow(hwnd);
 	}
@@ -1048,7 +1041,7 @@ static inline void ExitApplication(HWND hwnd) {
 
 void MsgDropFiles(HWND hwnd, UINT umsg, WPARAM wParam) {
 	UNREFERENCED_PARAMETER(umsg);
-	HDROP hDrop = (HDROP)wParam;
+	HDROP hDrop = AsPointer<HDROP>(wParam);
 	// fix drag & drop file from 32-bit app to 64-bit Notepad4 before Win 10
 #if defined(_WIN64) && (_WIN32_WINNT < _WIN32_WINNT_WIN10)
 	if (umsg == WM_DROPFILES && !bReadOnlyMode) {
@@ -1094,11 +1087,11 @@ void MsgDropFiles(HWND hwnd, UINT umsg, WPARAM wParam) {
 }
 
 #if NP2_ENABLE_DOT_LOG_FEATURE
-static inline bool IsFileStartsWithDotLog(void) {
+static inline bool IsFileStartsWithDotLog() noexcept {
 	char tch[5] = "";
 	const Sci_Position len = SciCall_GetText(COUNTOF(tch) - 1, tch);
 	// upper case
-	return len == 4 && StrEqualExA(tch, ".LOG");
+	return len == 4 && StrEqualEx(tch, ".LOG");
 }
 #endif
 
@@ -1144,7 +1137,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 	case WM_DESTROY:
 	case WM_ENDSESSION:
 		if (!bShutdownOK) {
-			EditMarkAll_Stop();
+			editMarkAll.Stop();
 			AutoSave_Stop(TRUE);
 			// Terminate file watching
 			InstallFileWatching(true);
@@ -1164,10 +1157,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 			// call SaveSettings() when hwndToolbar is still valid
 			SaveSettings(false);
 
-			MRU_MergeSave(&mruFile, bSaveRecentFiles);
-			MRU_MergeSave(&mruFind, bSaveFindReplace);
-			MRU_MergeSave(&mruReplace, bSaveFindReplace);
-			BitmapCache_Empty(&bitmapCache);
+			mruFile.MergeSave(bSaveRecentFiles);
+			mruFind.MergeSave(bSaveFindReplace);
+			mruReplace.MergeSave(bSaveFindReplace);
+			bitmapCache.Empty();
 
 			// Remove tray icon if necessary
 			ShowNotifyIcon(hwnd, false);
@@ -1216,14 +1209,14 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 		break;
 
 	case WM_SETTINGCHANGE:
-		BitmapCache_Invalidate(&bitmapCache);
+		bitmapCache.Invalidate();
 		// TODO: detect system theme and high contrast mode changes
 		SendMessage(hwndEdit, WM_SETTINGCHANGE, wParam, lParam);
 		Style_SetLexer(pLexCurrent, false); // override base elements
 		break;
 
 	case WM_SYSCOLORCHANGE:
-		BitmapCache_Invalidate(&bitmapCache);
+		bitmapCache.Invalidate();
 		SendMessage(hwndToolbar, WM_SYSCOLORCHANGE, wParam, lParam);
 		SendMessage(hwndEdit, WM_SYSCOLORCHANGE, wParam, lParam);
 		Style_SetLexer(pLexCurrent, false); // override base elements
@@ -1249,7 +1242,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 			const int h = mi.rcMonitor.bottom - mi.rcMonitor.top;
 			const UINT dpi = g_uCurrentDPI;
 
-			LPMINMAXINFO pmmi = (LPMINMAXINFO)lParam;
+			LPMINMAXINFO pmmi = AsPointer<LPMINMAXINFO>(lParam);
 			const int padding = 2*SystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
 			pmmi->ptMaxSize.x = w + padding + 2*SystemMetricsForDpi(SM_CXSIZEFRAME, dpi);
 			pmmi->ptMaxSize.y = h + padding + SystemMetricsForDpi(SM_CYCAPTION, dpi) + 2*SystemMetricsForDpi(SM_CYSIZEFRAME, dpi);
@@ -1270,7 +1263,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 		break;
 
 	case WM_COPYDATA: {
-		PCOPYDATASTRUCT pcds = (PCOPYDATASTRUCT)lParam;
+		PCOPYDATASTRUCT pcds = AsPointer<PCOPYDATASTRUCT>(lParam);
 
 		// Reset Change Notify
 		//bPendingChangeNotify = false;
@@ -1363,7 +1356,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 	return TRUE;
 
 	case WM_CONTEXTMENU: {
-		const int nID = GetDlgCtrlID((HWND)wParam);
+		const int nID = GetDlgCtrlID(AsPointer<HWND>(wParam));
 
 		if (!(nID == IDC_EDIT || nID == IDC_STATUSBAR || nID == IDC_REBAR || nID == IDC_TOOLBAR)) {
 			return DefWindowProc(hwnd, umsg, wParam, lParam);
@@ -1488,8 +1481,8 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 		break;
 
 	case WM_CHANGECBCHAIN:
-		if ((HWND)wParam == hwndNextCBChain) {
-			hwndNextCBChain = (HWND)lParam;
+		if (AsPointer<HWND>(wParam) == hwndNextCBChain) {
+			hwndNextCBChain = AsPointer<HWND>(lParam);
 		}
 		if (hwndNextCBChain) {
 			SendMessage(hwndNextCBChain, WM_CHANGECBCHAIN, lParam, wParam);
@@ -1557,7 +1550,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 		HWND box = FindWindow(L"#32770", nullptr);
 		HWND parent = GetParent(box);
 		// MessageBox belongs to us.
-		if (parent == (HWND)wParam || parent == hwnd) {
+		if (parent == AsPointer<HWND>(wParam) || parent == hwnd) {
 			CenterDlgInParentEx(box, parent);
 			SnapToDefaultButton(box);
 		}
@@ -1609,7 +1602,7 @@ void UpdateWindowTitle() noexcept {
 
 	WCHAR szTitle[512];
 	if (IsDocumentModified()) {
-		StrCpyExW(szTitle, L"* ");
+		StrCpyEx(szTitle, L"* ");
 	} else {
 		szTitle[0] = L'\0';
 	}
@@ -1643,8 +1636,8 @@ void UpdateWindowTitle() noexcept {
 			lstrcat(szTitle, szCurFile);
 		}
 	} else {
-		StrCpyExW(szCachedFile, L"");
-		StrCpyExW(szCachedDisplayName, L"");
+		StrCpyEx(szCachedFile, L"");
+		StrCpyEx(szCachedDisplayName, L"");
 		WCHAR szUntitled[128];
 		GetString(IDS_UNTITLED, szUntitled, COUNTOF(szUntitled));
 		lstrcat(szTitle, szUntitled);
@@ -1895,7 +1888,7 @@ void EditReplaceDocument(HANDLE pdoc) noexcept {
 // MsgCreate() - Handles WM_CREATE
 //
 //
-LRESULT MsgCreate(HWND hwnd, WPARAM wParam, LPARAM lParam) {
+LRESULT MsgCreate(HWND hwnd, WPARAM wParam, LPARAM lParam) noexcept {
 	UNREFERENCED_PARAMETER(wParam);
 	hwndMain = hwnd;
 	g_uCurrentDPI = GetWindowDPI(hwnd);
@@ -1908,7 +1901,7 @@ LRESULT MsgCreate(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	// a white/black window fades out on startup when using Direct2D.
 	EditCreate(hwnd);
 
-	HINSTANCE hInstance = ((LPCREATESTRUCT)lParam)->hInstance;
+	HINSTANCE hInstance = (AsPointer<LPCREATESTRUCT>(lParam))->hInstance;
 	hwndEditFrame = CreateWindowEx(
 						WS_EX_CLIENTEDGE,
 						WC_LISTVIEW,
@@ -1962,9 +1955,9 @@ LRESULT MsgCreate(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	// File MRU
 	const int flags = MRUFlags_FilePath | (((int)flagRelativeFileMRU) * MRUFlags_RelativePath) | (((int)flagPortableMyDocs) * MRUFlags_PortableMyDocs);
-	MRU_Init(&mruFile, MRU_KEY_RECENT_FILES, flags);
-	MRU_Init(&mruFind, MRU_KEY_RECENT_FIND, MRUFlags_QuoteValue);
-	MRU_Init(&mruReplace, MRU_KEY_RECENT_REPLACE, MRUFlags_QuoteValue);
+	mruFile.Init(MRU_KEY_RECENT_FILES, flags);
+	mruFind.Init(MRU_KEY_RECENT_FIND, MRUFlags_QuoteValue);
+	mruReplace.Init(MRU_KEY_RECENT_REPLACE, MRUFlags_QuoteValue);
 	return 0;
 }
 
@@ -1976,7 +1969,7 @@ LRESULT MsgCreate(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 	const BOOL bIsAppThemed = IsAppThemed();
 
-	const DWORD dwToolbarStyle = WS_TOOLBAR;
+	constexpr DWORD dwToolbarStyle = WS_TOOLBAR;
 	hwndToolbar = CreateWindowEx(0, TOOLBARCLASSNAME, nullptr, dwToolbarStyle,
 								 0, 0, 0, 0, hwnd, (HMENU)IDC_TOOLBAR, hInstance, nullptr);
 
@@ -1992,14 +1985,14 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 		bExternalBitmap = true;
 	} else {
 		const int resource = GetBitmapResourceIdForCurrentDPI(IDB_TOOLBAR16);
-		hbmp = (HBITMAP)LoadImage(g_exeInstance, MAKEINTRESOURCE(resource), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+		hbmp = static_cast<HBITMAP>(LoadImage(g_exeInstance, MAKEINTRESOURCE(resource), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
 	}
 	if (bAutoScaleToolbar) {
 		hbmp = ResizeImageForCurrentDPI(hbmp);
 	}
 	HBITMAP hbmpCopy = nullptr;
 	if (!bExternalBitmap) {
-		hbmpCopy = (HBITMAP)CopyImage(hbmp, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+		hbmpCopy = static_cast<HBITMAP>(CopyImage(hbmp, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
 	}
 	BITMAP bmp;
 	GetObject(hbmp, sizeof(BITMAP), &bmp);
@@ -2007,7 +2000,7 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 	HIMAGELIST himl = ImageList_Create(bmp.bmHeight, bmp.bmHeight, ILC_COLOR32 | ILC_MASK, 0, 0);
 	ImageList_AddMasked(himl, hbmp, CLR_DEFAULT);
 	DeleteObject(hbmp);
-	SendMessage(hwndToolbar, TB_SETIMAGELIST, 0, (LPARAM)himl);
+	SendMessage(hwndToolbar, TB_SETIMAGELIST, 0, AsInteger<LPARAM>(himl));
 
 	// Optionally add hot Toolbar Bitmap
 	if (tchToolbarBitmapHot != nullptr) {
@@ -2020,7 +2013,7 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 			himl = ImageList_Create(bmp.bmHeight, bmp.bmHeight, ILC_COLOR32 | ILC_MASK, 0, 0);
 			ImageList_AddMasked(himl, hbmp, CLR_DEFAULT);
 			DeleteObject(hbmp);
-			SendMessage(hwndToolbar, TB_SETHOTIMAGELIST, 0, (LPARAM)himl);
+			SendMessage(hwndToolbar, TB_SETHOTIMAGELIST, 0, AsInteger<LPARAM>(himl));
 		}
 	}
 
@@ -2035,7 +2028,7 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 			himl = ImageList_Create(bmp.bmHeight, bmp.bmHeight, ILC_COLOR32 | ILC_MASK, 0, 0);
 			ImageList_AddMasked(himl, hbmp, CLR_DEFAULT);
 			DeleteObject(hbmp);
-			SendMessage(hwndToolbar, TB_SETDISABLEDIMAGELIST, 0, (LPARAM)himl);
+			SendMessage(hwndToolbar, TB_SETDISABLEDIMAGELIST, 0, AsInteger<LPARAM>(himl));
 			bExternalBitmap = true;
 		}
 	}
@@ -2045,7 +2038,7 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 		if (fProcessed) {
 			himl = ImageList_Create(bmp.bmHeight, bmp.bmHeight, ILC_COLOR32 | ILC_MASK, 0, 0);
 			ImageList_AddMasked(himl, hbmpCopy, CLR_DEFAULT);
-			SendMessage(hwndToolbar, TB_SETDISABLEDIMAGELIST, 0, (LPARAM)himl);
+			SendMessage(hwndToolbar, TB_SETDISABLEDIMAGELIST, 0, AsInteger<LPARAM>(himl));
 		}
 	}
 	if (hbmpCopy) {
@@ -2054,33 +2047,31 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 
 #if NP2_ENABLE_CUSTOMIZE_TOOLBAR_LABELS
 	// Load toolbar labels
-	IniSection section;
-	WCHAR *pIniSectionBuf = (WCHAR *)NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_TOOLBAR_LABELS);
-	const int cchIniSection = (int)(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
-	IniSection * const pIniSection = &section;
+	IniSectionParser section;
+	WCHAR *pIniSectionBuf = static_cast<WCHAR *>(NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_TOOLBAR_LABELS));
+	const DWORD cchIniSection = static_cast<DWORD>(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
 
-	IniSectionInit(pIniSection, COUNTOF(tbbMainWnd));
+	section.Init(COUNTOF(tbbMainWnd));
 	LoadIniSection(INI_SECTION_NAME_TOOLBAR_LABELS, pIniSectionBuf, cchIniSection);
-	IniSectionParseArray(pIniSection, pIniSectionBuf, FALSE);
-	const UINT count = pIniSection->count;
+	section.ParseArray(pIniSectionBuf, FALSE);
 
-	for (UINT i = 0; i < count; i++) {
-		const IniKeyValueNode *node = &pIniSection->nodeList[i];
-		const UINT n = (UINT)wcstol(node->key, nullptr, 10);
+	for (UINT i = 0; i < section.count; i++) {
+		const IniKeyValueNode &node = section.nodeList[i];
+		const UINT n = static_cast<UINT>(wcstol(node.key, nullptr, 10));
 		if (n == 0 || n >= COUNTOF(tbbMainWnd)) {
 			continue;
 		}
 
-		LPCWSTR tchDesc = node->value;
+		LPCWSTR tchDesc = node.value;
 		if (StrNotEmpty(tchDesc)) {
-			tbbMainWnd[n].iString = SendMessage(hwndToolbar, TB_ADDSTRING, 0, (LPARAM)tchDesc);
+			tbbMainWnd[n].iString = SendMessage(hwndToolbar, TB_ADDSTRING, 0, AsInteger<LPARAM>(tchDesc));
 			tbbMainWnd[n].fsStyle |= BTNS_AUTOSIZE | BTNS_SHOWTEXT;
 		} else {
 			tbbMainWnd[n].fsStyle &= ~(BTNS_AUTOSIZE | BTNS_SHOWTEXT);
 		}
 	}
 
-	IniSectionFree(pIniSection);
+	section.Free();
 	NP2HeapFree(pIniSectionBuf);
 #endif // NP2_ENABLE_CUSTOMIZE_TOOLBAR_LABELS
 
@@ -2092,7 +2083,7 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 	}
 
 	RECT rc;
-	SendMessage(hwndToolbar, TB_GETITEMRECT, 0, (LPARAM)&rc);
+	SendMessage(hwndToolbar, TB_GETITEMRECT, 0, AsInteger<LPARAM>(&rc));
 	//SendMessage(hwndToolbar, TB_SETINDENT, 2, 0);
 
 	cachedStatusItem.updateMask = ((1 << StatusItem_ItemCount) - 1) ^ (1 << StatusItem_Empty);
@@ -2109,7 +2100,7 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 	rbi.cbSize = sizeof(REBARINFO);
 	rbi.fMask = 0;
 	rbi.himl = nullptr;
-	SendMessage(hwndReBar, RB_SETBARINFO, 0, (LPARAM)&rbi);
+	SendMessage(hwndReBar, RB_SETBARINFO, 0, AsInteger<LPARAM>(&rbi));
 
 	REBARBANDINFO rbBand;
 	rbBand.cbSize = sizeof(REBARBANDINFO);
@@ -2120,12 +2111,12 @@ void CreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 		rbBand.fStyle |= RBBS_CHILDEDGE;
 	}
 	rbBand.hbmBack = nullptr;
-	rbBand.lpText = (LPWSTR)L"Toolbar";
+	rbBand.lpText = const_cast<LPWSTR>(L"Toolbar");
 	rbBand.hwndChild = hwndToolbar;
 	rbBand.cxMinChild = (rc.right - rc.left) * COUNTOF(tbbMainWnd);
 	rbBand.cyMinChild = (rc.bottom - rc.top) + 2 * rc.top;
 	rbBand.cx		= 0;
-	SendMessage(hwndReBar, RB_INSERTBAND, (WPARAM)(-1), (LPARAM)&rbBand);
+	SendMessage(hwndReBar, RB_INSERTBAND, (WPARAM)(-1), AsInteger<LPARAM>(&rbBand));
 
 	SetWindowPos(hwndReBar, nullptr, 0, 0, 0, 0, SWP_NOZORDER);
 	GetWindowRect(hwndReBar, &rc);
@@ -2147,13 +2138,13 @@ void RecreateBars(HWND hwnd, HINSTANCE hInstance) noexcept {
 // MsgDPIChanged() - Handle WM_DPICHANGED
 //
 //
-void MsgDPIChanged(HWND hwnd, WPARAM wParam, LPARAM lParam) {
+void MsgDPIChanged(HWND hwnd, WPARAM wParam, LPARAM lParam) noexcept {
 	g_uCurrentDPI = HIWORD(wParam);
-	const RECT* const rc = (RECT *)lParam;
+	const RECT* const rc = AsPointer<RECT *>(lParam);
 	const Sci_Line iVisTopLine = SciCall_GetFirstVisibleLine();
 	const Sci_Line iDocTopLine = SciCall_DocLineFromVisible(iVisTopLine);
 
-	BitmapCache_Invalidate(&bitmapCache);
+	bitmapCache.Invalidate();
 	// recreate toolbar and statusbar
 	RecreateBars(hwnd, g_hInstance);
 	const int cx = rc->right - rc->left;
@@ -2211,7 +2202,7 @@ void MsgSize(HWND hwnd, WPARAM wParam, LPARAM lParam) noexcept {
 		return;
 	}
 
-	const int x = 0;
+	constexpr int x = 0;
 	int y = 0;
 
 	const int cx = LOWORD(lParam);
@@ -2284,7 +2275,7 @@ void UpdateStatusBarCache(int item) noexcept {
 }
 
 #if NP2_ENABLE_APP_LOCALIZATION_DLL
-void ValidateUILangauge(void) {
+void ValidateUILangauge() noexcept {
 	const LANGID subLang = SUBLANGID(uiLanguage);
 	switch (PRIMARYLANGID(uiLanguage)) {
 	case LANG_ENGLISH:
@@ -2319,7 +2310,7 @@ void ValidateUILangauge(void) {
 	}
 }
 
-void SetUILanguage(int menu) {
+void SetUILanguage(int menu) noexcept {
 	LANGID lang = uiLanguage;
 	switch (menu) {
 	case IDM_LANG_USER_DEFAULT:
@@ -2386,7 +2377,7 @@ bool IsIMEInNativeMode() noexcept {
 	return result;
 }
 
-void MsgNotifyZoom(void) {
+void MsgNotifyZoom() noexcept {
 	const Sci_Line iVisTopLine = SciCall_GetFirstVisibleLine();
 	const Sci_Line iDocTopLine = SciCall_DocLineFromVisible(iVisTopLine);
 	iZoomLevel = SciCall_GetZoom();
@@ -2418,7 +2409,7 @@ void MsgNotifyZoom(void) {
 //
 void MsgInitMenu(HWND hwnd, WPARAM wParam, LPARAM lParam) noexcept {
 	UNREFERENCED_PARAMETER(lParam);
-	HMENU hmenu = (HMENU)wParam;
+	HMENU hmenu = AsPointer<HMENU>(wParam);
 
 	const bool hasPath = StrNotEmpty(szCurFile);
 	static const uint16_t menuRequiresPath[] = {
@@ -2451,7 +2442,7 @@ void MsgInitMenu(HWND hwnd, WPARAM wParam, LPARAM lParam) noexcept {
 
 	int i = IDM_ENCODING_ANSI - 1;
 	if (iCurrentEncoding <= CPI_UTF8SIGN) {
-		const UINT mask = ((IDM_ENCODING_ANSI - IDM_ENCODING_ANSI + 1) << CPI_DEFAULT*4)
+		constexpr UINT mask = ((IDM_ENCODING_ANSI - IDM_ENCODING_ANSI + 1) << CPI_DEFAULT*4)
 			| ((IDM_ENCODING_UNICODE - IDM_ENCODING_ANSI + 1) << CPI_UNICODEBOM*4)
 			| ((IDM_ENCODING_UNICODEREV - IDM_ENCODING_ANSI + 1) << CPI_UNICODEBEBOM*4)
 			| ((IDM_ENCODING_UTF8 - IDM_ENCODING_ANSI + 1) << CPI_UTF8*4)
@@ -2848,7 +2839,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 		WCHAR szModuleName[MAX_PATH];
 		GetModuleFileName(nullptr, szModuleName, COUNTOF(szModuleName));
-		LPWSTR szParameters = (LPWSTR)NP2HeapAlloc(sizeof(WCHAR) * 1024);
+		LPWSTR szParameters = static_cast<LPWSTR>(NP2HeapAlloc(sizeof(WCHAR) * 1024));
 		GetRelaunchParameters(szParameters, szCurFile, true, emptyWind);
 
 		SHELLEXECUTEINFO sei;
@@ -3064,7 +3055,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 				break;
 			}
 		} else {
-			const UINT mask = (CPI_DEFAULT << 4*(IDM_ENCODING_ANSI - IDM_ENCODING_ANSI))
+			constexpr UINT mask = (CPI_DEFAULT << 4*(IDM_ENCODING_ANSI - IDM_ENCODING_ANSI))
 				| (CPI_UNICODEBOM << 4*(IDM_ENCODING_UNICODE - IDM_ENCODING_ANSI))
 				| (CPI_UNICODEBEBOM << 4*(IDM_ENCODING_UNICODEREV - IDM_ENCODING_ANSI))
 				| (CPI_UTF8 << 4*(IDM_ENCODING_UTF8 - IDM_ENCODING_ANSI))
@@ -3840,7 +3831,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 		}
 
 		if (iNextLine >= 0) {
-			editMarkAllStatus.ignoreSelectionUpdate = true;
+			editMarkAll.ignoreSelectionUpdate = true;
 			SciCall_EnsureVisible(iNextLine);
 			SciCall_GotoLine(iNextLine);
 			SciCall_SetYCaretPolicy(CARET_SLOP | CARET_STRICT | CARET_EVEN, 10);
@@ -3861,7 +3852,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 		}
 
 		if (iNextLine >= 0) {
-			editMarkAllStatus.ignoreSelectionUpdate = true;
+			editMarkAll.ignoreSelectionUpdate = true;
 			SciCall_EnsureVisible(iNextLine);
 			SciCall_GotoLine(iNextLine);
 			SciCall_SetYCaretPolicy(CARET_SLOP | CARET_STRICT | CARET_EVEN, 10);
@@ -4048,7 +4039,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 	case IDM_VIEW_TABSETTINGS:
 		if (TabSettingsDlg(hwnd)) {
-			FileVars_Apply(&fvCurFile);
+			fvCurFile.Apply();
 		}
 		break;
 
@@ -4128,9 +4119,9 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			break;
 		}
 		if (bMarkOccurrences) {
-			EditMarkAll(FALSE, bMarkOccurrencesMatchCase, bMarkOccurrencesMatchWords, bMarkOccurrencesBookmark);
+			editMarkAll.MarkAll(FALSE, bMarkOccurrencesMatchCase, bMarkOccurrencesMatchWords, bMarkOccurrencesBookmark);
 		} else {
-			EditMarkAll_Clear();
+			editMarkAll.Clear();
 		}
 		UpdateStatusbar();
 		break;
@@ -4222,7 +4213,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			scn.nmhdr.idFrom = IDC_EDIT;
 			scn.nmhdr.code = SCN_UPDATEUI;
 			scn.updated = SC_UPDATE_APP_CUSTOM;
-			SendMessage(hwnd, WM_NOTIFY, IDC_EDIT, (LPARAM)&scn);
+			SendMessage(hwnd, WM_NOTIFY, IDC_EDIT, AsInteger<LPARAM>(&scn));
 		} else {
 			SciCall_BraceHighlight(INVALID_POSITION, INVALID_POSITION);
 		}
@@ -4434,7 +4425,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	case IDM_VIEW_SHOWFILENAMEFIRST:
 	case IDM_VIEW_SHOWFULLPATH:
 		iPathNameFormat = (TitlePathNameFormat)(LOWORD(wParam) - IDM_VIEW_SHOWFILENAMEONLY);
-		StrCpyExW(szTitleExcerpt, L"");
+		StrCpyEx(szTitleExcerpt, L"");
 		UpdateWindowTitle();
 		break;
 
@@ -4875,8 +4866,8 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			if (path) {
 				if (!PathIsFile(path)) {
 					if (IDYES == MsgBoxWarn(MB_YESNO, IDS_ERR_MRUDLG)) {
-						MRU_DeleteFileFromStore(&mruFile, path);
-						MRU_Delete(&mruFile, index);
+						mruFile.DeleteFileFromStore(path);
+						mruFile.Delete(index);
 					}
 				} else if (FileSave(FileSaveFlag_Ask)) {
 					FileLoad(FileLoadFlag_DontSave, path);
@@ -4897,8 +4888,8 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	UNREFERENCED_PARAMETER(wParam);
 
-	LPNMHDR pnmh = (LPNMHDR)lParam;
-	const SCNotification * const scn = reinterpret_cast<SCNotification *>(lParam);
+	LPNMHDR pnmh = AsPointer<LPNMHDR>(lParam);
+	const SCNotification * const scn = AsPointer<SCNotification *>(lParam);
 
 	switch (pnmh->idFrom) {
 	case IDC_EDIT:
@@ -4918,21 +4909,21 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 					}
 
 					// mark occurrences of text currently selected
-					if (editMarkAllStatus.ignoreSelectionUpdate) {
-						editMarkAllStatus.ignoreSelectionUpdate = false;
+					if (editMarkAll.ignoreSelectionUpdate) {
+						editMarkAll.ignoreSelectionUpdate = false;
 					} else if (bMarkOccurrences) {
 						if (SciCall_IsSelectionEmpty()) {
-							if (editMarkAllStatus.matchCount) {
-								EditMarkAll_Clear();
+							if (editMarkAll.matchCount) {
+								editMarkAll.Clear();
 							}
 						} else {
-							EditMarkAll((scn->updated & SC_UPDATE_CONTENT), bMarkOccurrencesMatchCase, bMarkOccurrencesMatchWords, bMarkOccurrencesBookmark);
+							editMarkAll.MarkAll((scn->updated & SC_UPDATE_CONTENT), bMarkOccurrencesMatchCase, bMarkOccurrencesMatchWords, bMarkOccurrencesBookmark);
 						}
 					}
 				} else if (scn->updated & SC_UPDATE_CONTENT) {
 					// cachedStatusItem.updateMask is already set in SCN_MODIFIED.
-					if (editMarkAllStatus.matchCount) {
-						EditMarkAll(TRUE, bMarkOccurrencesMatchCase, bMarkOccurrencesMatchWords, bMarkOccurrencesBookmark);
+					if (editMarkAll.matchCount) {
+						editMarkAll.MarkAll(TRUE, bMarkOccurrencesMatchCase, bMarkOccurrencesMatchWords, bMarkOccurrencesBookmark);
 					}
 				}
 				if (cachedStatusItem.updateMask) {
@@ -5043,7 +5034,7 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 			LPCSTR text = scn->text;
 			// function/array/template/generic
-			LPSTR braces = (LPSTR)strpbrk(text, "([{<");
+			LPSTR braces = const_cast<LPSTR>(strpbrk(text, "([{<"));
 			const Sci_Position iCurPos = SciCall_GetCurrentPos();
 			Sci_Position offset;
 			bool closeBrace = false;
@@ -5192,7 +5183,7 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return TRUE;
 
 		case TBN_GETBUTTONINFO: {
-			LPTBNOTIFY lpTbNotify = (LPTBNOTIFY)lParam;
+			LPTBNOTIFY lpTbNotify = AsPointer<LPTBNOTIFY>(lParam);
 			if ((UINT)lpTbNotify->iItem < COUNTOF(tbbMainWnd)) {
 				WCHAR tch[128];
 				GetString(tbbMainWnd[lpTbNotify->iItem].idCommand, tch, COUNTOF(tch));
@@ -5208,7 +5199,7 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			return FALSE;
 
 		case TBN_DROPDOWN: {
-			LPTBNOTIFY lpTbNotify = (LPTBNOTIFY)lParam;
+			LPTBNOTIFY lpTbNotify = AsPointer<LPTBNOTIFY>(lParam);
 			HMENU hmenu = nullptr;
 			HMENU subMenu = nullptr;
 			if (lpTbNotify->iItem == IDT_FILE_OPEN) {
@@ -5217,15 +5208,15 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 					return TBDDRET_TREATPRESSED;
 				}
 				hmenu = subMenu = CreatePopupMenu();
-				BitmapCache_StartUse(&bitmapCache);
+				bitmapCache.StartUse();
 				MENUITEMINFO mii;
 				mii.cbSize = sizeof(MENUITEMINFO);
 				mii.fMask = MIIM_ID | MIIM_STRING | MIIM_BITMAP;
 				for (int i = 0; i < mruFile.iSize; i++) {
 					LPCWSTR path = mruFile.pszItems[i];
-					HBITMAP hbmp = BitmapCache_Get(&bitmapCache, path);
+					HBITMAP hbmp = bitmapCache.Get(path);
 					mii.wID = i + IDM_RECENT_HISTORY_START;
-					mii.dwTypeData = (LPWSTR)path;
+					mii.dwTypeData = const_cast<LPWSTR>(path);
 					mii.hbmpItem = hbmp;
 					InsertMenuItem(subMenu, i, TRUE, &mii);
 				}
@@ -5235,8 +5226,8 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 			}
 			TPMPARAMS tpm;
 			tpm.cbSize = sizeof(TPMPARAMS);
-			SendMessage(hwndToolbar, TB_GETRECT, lpTbNotify->iItem, (LPARAM)&tpm.rcExclude);
-			MapWindowPoints(hwndToolbar, HWND_DESKTOP, (LPPOINT)&tpm.rcExclude, 2);
+			SendMessage(hwndToolbar, TB_GETRECT, lpTbNotify->iItem, AsInteger<LPARAM>(&tpm.rcExclude));
+			MapWindowPoints(hwndToolbar, HWND_DESKTOP, reinterpret_cast<LPPOINT>(&tpm.rcExclude), 2);
 			TrackPopupMenuEx(subMenu,
 							TPM_LEFTALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
 							tpm.rcExclude.left, tpm.rcExclude.bottom, hwnd, &tpm);
@@ -5249,7 +5240,7 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	case IDC_STATUSBAR:
 		switch (pnmh->code) {
 		case NM_CLICK: {
-			LPNMMOUSE pnmm = (LPNMMOUSE)lParam;
+			LPNMMOUSE pnmm = AsPointer<LPNMMOUSE>(lParam);
 			switch (pnmm->dwItemSpec) {
 			case StatusItem_EolMode:
 				EditEnsureConsistentLineEndings();
@@ -5265,7 +5256,7 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 		}
 
 		case NM_DBLCLK: {
-			LPNMMOUSE pnmm = (LPNMMOUSE)lParam;
+			LPNMMOUSE pnmm = AsPointer<LPNMMOUSE>(lParam);
 			switch (pnmm->dwItemSpec) {
 			case StatusItem_Line:
 				EditLineNumDlg(hwndEdit);
@@ -5280,7 +5271,7 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 				return TRUE;
 
 			case StatusItem_EolMode: {
-				const UINT mask = (SC_EOL_LF << 2*SC_EOL_CRLF) | (SC_EOL_CR << 2*SC_EOL_LF) | (SC_EOL_CRLF << 2*SC_EOL_CR);
+				constexpr UINT mask = (SC_EOL_LF << 2*SC_EOL_CRLF) | (SC_EOL_CR << 2*SC_EOL_LF) | (SC_EOL_CRLF << 2*SC_EOL_CR);
 				iCurrentEOLMode = (mask >> (iCurrentEOLMode << 1)) & 3;
 				ConvertLineEndings(iCurrentEOLMode);
 				return TRUE;
@@ -5306,7 +5297,7 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	default:
 		switch (pnmh->code) {
 		case TTN_NEEDTEXT: {
-			LPTOOLTIPTEXT pTTT = (LPTOOLTIPTEXT)lParam;
+			LPTOOLTIPTEXT pTTT = AsPointer<LPTOOLTIPTEXT>(lParam);
 			if (pTTT->uFlags & TTF_IDISHWND) {
 				//nop;
 			} else {
@@ -5340,24 +5331,23 @@ static void GetWindowPositionSectionName(HMONITOR hMonitor, WCHAR (&sectionName)
 // LoadSettings()
 //
 //
-void LoadSettings(void) {
-	IniSection section;
-	WCHAR *pIniSectionBuf = (WCHAR *)NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_SETTINGS);
-	const int cchIniSection = (int)(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
-	IniSection * const pIniSection = &section;
-	IniSectionInit(pIniSection, 128);
+void LoadSettings() noexcept {
+	IniSectionParser section;
+	WCHAR *pIniSectionBuf = static_cast<WCHAR *>(NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_SETTINGS));
+	const DWORD cchIniSection = static_cast<DWORD>(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
+	section.Init(128);
 
 	LoadIniSection(INI_SECTION_NAME_SETTINGS, pIniSectionBuf, cchIniSection);
-	IniSectionParse(pIniSection, pIniSectionBuf);
+	section.Parse(pIniSectionBuf);
 
-	//const int iSettingsVersion = IniSectionGetInt(pIniSection, L"SettingsVersion", NP2SettingsVersion_Current);
-	bSaveSettings = IniSectionGetBool(pIniSection, L"SaveSettings", true);
-	// TODO: sort loading order by item frequency to reduce IniSectionUnsafeGetValue() calls
-	LPCWSTR strValue = IniSectionGetValue(pIniSection, L"OpenWithDir");
+	//const int iSettingsVersion = section.GetInt(L"SettingsVersion", NP2SettingsVersion_Current);
+	bSaveSettings = section.GetBool(L"SaveSettings", true);
+	// TODO: sort loading order by item frequency to reduce UnsafeGetValue() calls
+	LPCWSTR strValue = section.GetValue(L"OpenWithDir");
 	if (StrIsEmpty(strValue)) {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 		LPWSTR pszPath = nullptr;
-		if (S_OK == SHGetKnownFolderPath(KnownFolderId_Desktop, KF_FLAG_DEFAULT, nullptr, &pszPath)) {
+		if (S_OK == SHGetKnownFolderPath(FOLDERID_Desktop, KF_FLAG_DEFAULT, nullptr, &pszPath)) {
 			lstrcpy(tchOpenWithDir, pszPath);
 			CoTaskMemFree(pszPath);
 		}
@@ -5368,11 +5358,11 @@ void LoadSettings(void) {
 		PathAbsoluteFromApp(strValue, tchOpenWithDir, true);
 	}
 
-	strValue = IniSectionGetValue(pIniSection, L"Favorites");
+	strValue = section.GetValue(L"Favorites");
 	if (StrIsEmpty(strValue)) {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 		LPWSTR pszPath = nullptr;
-		if (S_OK == SHGetKnownFolderPath(KnownFolderId_Documents, KF_FLAG_DEFAULT, nullptr, &pszPath)) {
+		if (S_OK == SHGetKnownFolderPath(FOLDERID_Documents, KF_FLAG_DEFAULT, nullptr, &pszPath)) {
 			lstrcpy(tchFavoritesDir, pszPath);
 			CoTaskMemFree(pszPath);
 		}
@@ -5383,86 +5373,86 @@ void LoadSettings(void) {
 		PathAbsoluteFromApp(strValue, tchFavoritesDir, true);
 	}
 
-	int iValue = IniSectionGetInt(pIniSection, L"PathNameFormat", TitlePathNameFormat_NameFirst);
+	int iValue = section.GetInt(L"PathNameFormat", TitlePathNameFormat_NameFirst);
 	iPathNameFormat = clamp(static_cast<TitlePathNameFormat>(iValue), TitlePathNameFormat_NameOnly, TitlePathNameFormat_FullPath);
 
 	POINT pt;
-	pt.x = IniSectionGetInt(pIniSection, L"WindowPosX", 0);
-	pt.y = IniSectionGetInt(pIniSection, L"WindowPosY", 0);
+	pt.x = section.GetInt(L"WindowPosX", 0);
+	pt.y = section.GetInt(L"WindowPosY", 0);
 
-	bSaveRecentFiles = IniSectionGetBool(pIniSection, L"SaveRecentFiles", false);
-	bSaveFindReplace = IniSectionGetBool(pIniSection, L"SaveFindReplace", false);
-	bFindReplaceTransparentMode = IniSectionGetBool(pIniSection, L"FindReplaceTransparentMode", true);
-	bFindReplaceUseMonospacedFont = IniSectionGetBool(pIniSection, L"FindReplaceUseMonospacedFont", false);
-	bFindReplaceFindAllBookmark = IniSectionGetBool(pIniSection, L"FindReplaceFindAllBookmark", false);
+	bSaveRecentFiles = section.GetBool(L"SaveRecentFiles", false);
+	bSaveFindReplace = section.GetBool(L"SaveFindReplace", false);
+	bFindReplaceTransparentMode = section.GetBool(L"FindReplaceTransparentMode", true);
+	bFindReplaceUseMonospacedFont = section.GetBool(L"FindReplaceUseMonospacedFont", false);
+	bFindReplaceFindAllBookmark = section.GetBool(L"FindReplaceFindAllBookmark", false);
 
-	efrData.bFindClose = IniSectionGetBool(pIniSection, L"CloseFind", false);
-	efrData.bReplaceClose = IniSectionGetBool(pIniSection, L"CloseReplace", false);
-	efrData.bNoFindWrap = IniSectionGetBool(pIniSection, L"NoFindWrap", false);
+	efrData.bFindClose = section.GetBool(L"CloseFind", false);
+	efrData.bReplaceClose = section.GetBool(L"CloseReplace", false);
+	efrData.bNoFindWrap = section.GetBool(L"NoFindWrap", false);
 
 	if (bSaveFindReplace) {
 		efrData.fuFlags = 0;
-		if (IniSectionGetBool(pIniSection, L"FindReplaceMatchCase", false)) {
+		if (section.GetBool(L"FindReplaceMatchCase", false)) {
 			efrData.fuFlags |= SCFIND_MATCHCASE;
 		}
-		if (IniSectionGetBool(pIniSection, L"FindReplaceMatchWholeWorldOnly", false)) {
+		if (section.GetBool(L"FindReplaceMatchWholeWorldOnly", false)) {
 			efrData.fuFlags |= SCFIND_WHOLEWORD;
 		}
-		if (IniSectionGetBool(pIniSection, L"FindReplaceMatchBeginingWordOnly", false)) {
+		if (section.GetBool(L"FindReplaceMatchBeginingWordOnly", false)) {
 			efrData.fuFlags |= SCFIND_WORDSTART;
 		}
-		if (IniSectionGetBool(pIniSection, L"FindReplaceRegExpSearch", false)) {
+		if (section.GetBool(L"FindReplaceRegExpSearch", false)) {
 			efrData.fuFlags |= NP2_RegexDefaultFlags;
 		}
-		efrData.bTransformBS = IniSectionGetBool(pIniSection, L"FindReplaceTransformBackslash", false);
-		efrData.bWildcardSearch = IniSectionGetBool(pIniSection, L"FindReplaceWildcardSearch", false);
+		efrData.bTransformBS = section.GetBool(L"FindReplaceTransformBackslash", false);
+		efrData.bWildcardSearch = section.GetBool(L"FindReplaceWildcardSearch", false);
 	}
 
-	fWordWrapG = IniSectionGetBool(pIniSection, L"WordWrap", true);
-	iValue = IniSectionGetInt(pIniSection, L"WordWrapMode", SC_WRAP_AUTO);
+	fWordWrapG = section.GetBool(L"WordWrap", true);
+	iValue = section.GetInt(L"WordWrapMode", SC_WRAP_AUTO);
 	iWordWrapMode = clamp(iValue, SC_WRAP_WORD, SC_WRAP_AUTO);
 
-	iValue = IniSectionGetInt(pIniSection, L"WordWrapIndent", EditWrapIndent_DefaultValue);
+	iValue = section.GetInt(L"WordWrapIndent", EditWrapIndent_DefaultValue);
 	iWordWrapIndent = clamp<int>(iValue, EditWrapIndent_None, EditWrapIndent_MaxValue);
 
-	iValue = IniSectionGetInt(pIniSection, L"WordWrapSymbols", EditWrapSymbol_DefaultValue);
+	iValue = section.GetInt(L"WordWrapSymbols", EditWrapSymbol_DefaultValue);
 	iValue = clamp<int>(iValue, 0, EditWrapSymbol_MaxValue);
 	iWordWrapSymbols = clamp<int>(iValue % 10, EditWrapSymbolBefore_None, EditWrapSymbolBefore_MaxValue) + (iValue / 10) * 10;
 
-	bShowWordWrapSymbols = IniSectionGetBool(pIniSection, L"ShowWordWrapSymbols", false);
-	bWordWrapSelectSubLine = IniSectionGetBool(pIniSection, L"WordWrapSelectSubLine", false);
-	bShowUnicodeControlCharacter = IniSectionGetBool(pIniSection, L"ShowUnicodeControlCharacter", false);
+	bShowWordWrapSymbols = section.GetBool(L"ShowWordWrapSymbols", false);
+	bWordWrapSelectSubLine = section.GetBool(L"WordWrapSelectSubLine", false);
+	bShowUnicodeControlCharacter = section.GetBool(L"ShowUnicodeControlCharacter", false);
 
-	bMatchBraces = IniSectionGetBool(pIniSection, L"MatchBraces", true);
-	bHighlightCurrentBlock = IniSectionGetBool(pIniSection, L"HighlightCurrentBlock", true);
-	iValue = IniSectionGetInt(pIniSection, L"HighlightCurrentLine", 10 + LineHighlightMode_OutlineFrame);
+	bMatchBraces = section.GetBool(L"MatchBraces", true);
+	bHighlightCurrentBlock = section.GetBool(L"HighlightCurrentBlock", true);
+	iValue = section.GetInt(L"HighlightCurrentLine", 10 + LineHighlightMode_OutlineFrame);
 	bHighlightCurrentSubLine = (iValue >= 10);
 	iHighlightCurrentLine = clamp(static_cast<LineHighlightMode>(iValue % 10), LineHighlightMode_None, LineHighlightMode_OutlineFrame);
-	bShowIndentGuides = IniSectionGetBool(pIniSection, L"ShowIndentGuides", false);
+	bShowIndentGuides = section.GetBool(L"ShowIndentGuides", false);
 
-	autoCompletionConfig.bIndentText = IniSectionGetBool(pIniSection, L"AutoIndent", true);
-	autoCompletionConfig.bCloseTags = IniSectionGetBool(pIniSection, L"AutoCloseTags", true);
-	autoCompletionConfig.bCompleteWord = IniSectionGetBool(pIniSection, L"AutoCompleteWords", true);
-	autoCompletionConfig.bScanWordsInDocument = IniSectionGetBool(pIniSection, L"AutoCScanWordsInDocument", true);
-	iValue = IniSectionGetInt(pIniSection, L"AutoCompleteScope", AutoCompleteScope_Default);
+	autoCompletionConfig.bIndentText = section.GetBool(L"AutoIndent", true);
+	autoCompletionConfig.bCloseTags = section.GetBool(L"AutoCloseTags", true);
+	autoCompletionConfig.bCompleteWord = section.GetBool(L"AutoCompleteWords", true);
+	autoCompletionConfig.bScanWordsInDocument = section.GetBool(L"AutoCScanWordsInDocument", true);
+	iValue = section.GetInt(L"AutoCompleteScope", AutoCompleteScope_Default);
 	autoCompletionConfig.fCompleteScope = iValue & 15;
 	autoCompletionConfig.fScanWordScope = iValue >> 4;
-	iValue = IniSectionGetInt(pIniSection, L"AutoCScanWordsTimeout", AUTOC_SCAN_WORDS_DEFAULT_TIMEOUT);
+	iValue = section.GetInt(L"AutoCScanWordsTimeout", AUTOC_SCAN_WORDS_DEFAULT_TIMEOUT);
 	autoCompletionConfig.dwScanWordsTimeout = max(iValue, AUTOC_SCAN_WORDS_MIN_TIMEOUT);
-	autoCompletionConfig.bEnglistIMEModeOnly = IniSectionGetBool(pIniSection, L"AutoCEnglishIMEModeOnly", false);
-	autoCompletionConfig.bIgnoreCase = IniSectionGetBool(pIniSection, L"AutoCIgnoreCase", false);
-	autoCompletionConfig.bLaTeXInputMethod = IniSectionGetBool(pIniSection, L"LaTeXInputMethod", false);
-	iValue = IniSectionGetInt(pIniSection, L"AutoCVisibleItemCount", 16);
+	autoCompletionConfig.bEnglistIMEModeOnly = section.GetBool(L"AutoCEnglishIMEModeOnly", false);
+	autoCompletionConfig.bIgnoreCase = section.GetBool(L"AutoCIgnoreCase", false);
+	autoCompletionConfig.bLaTeXInputMethod = section.GetBool(L"LaTeXInputMethod", false);
+	iValue = section.GetInt(L"AutoCVisibleItemCount", 16);
 	autoCompletionConfig.iVisibleItemCount = max(iValue, MIN_AUTO_COMPLETION_VISIBLE_ITEM_COUNT);
-	iValue = IniSectionGetInt(pIniSection, L"AutoCMinWordLength", 1);
+	iValue = section.GetInt(L"AutoCMinWordLength", 1);
 	autoCompletionConfig.iMinWordLength = max(iValue, MIN_AUTO_COMPLETION_WORD_LENGTH);
-	iValue = IniSectionGetInt(pIniSection, L"AutoCMinNumberLength", 3);
+	iValue = section.GetInt(L"AutoCMinNumberLength", 3);
 	autoCompletionConfig.iMinNumberLength = max(iValue, MIN_AUTO_COMPLETION_NUMBER_LENGTH);
-	autoCompletionConfig.fAutoCompleteFillUpMask = IniSectionGetInt(pIniSection, L"AutoCFillUpMask", AutoCompleteFillUpMask_Default);
-	autoCompletionConfig.fAutoInsertMask = IniSectionGetInt(pIniSection, L"AutoInsertMask", AutoInsertMask_Default);
-	iValue = IniSectionGetInt(pIniSection, L"AsmLineCommentChar", AsmLineCommentChar_Semicolon);
+	autoCompletionConfig.fAutoCompleteFillUpMask = section.GetInt(L"AutoCFillUpMask", AutoCompleteFillUpMask_Default);
+	autoCompletionConfig.fAutoInsertMask = section.GetInt(L"AutoInsertMask", AutoInsertMask_Default);
+	iValue = section.GetInt(L"AsmLineCommentChar", AsmLineCommentChar_Semicolon);
 	autoCompletionConfig.iAsmLineCommentChar = clamp<int>(iValue, AsmLineCommentChar_Semicolon, AsmLineCommentChar_At);
-	strValue = IniSectionGetValue(pIniSection, L"AutoCFillUpPunctuation");
+	strValue = section.GetValue(L"AutoCFillUpPunctuation");
 	if (StrIsEmpty(strValue)) {
 		lstrcpy(autoCompletionConfig.wszAutoCompleteFillUp, AUTO_COMPLETION_FILLUP_DEFAULT);
 	} else {
@@ -5470,153 +5460,153 @@ void LoadSettings(void) {
 	}
 	EditCompleteUpdateConfig();
 
-	iSelectOption = IniSectionGetInt(pIniSection, L"SelectOption", SelectOption_Default);
-	iLineSelectionMode = IniSectionGetInt(pIniSection, L"LineSelection", LineSelectionMode_VisualStudio);
+	iSelectOption = section.GetInt(L"SelectOption", SelectOption_Default);
+	iLineSelectionMode = section.GetInt(L"LineSelection", LineSelectionMode_VisualStudio);
 
-	iValue = IniSectionGetInt(pIniSection, L"TabWidth", TAB_WIDTH_4);
+	iValue = section.GetInt(L"TabWidth", TAB_WIDTH_4);
 	tabSettings.globalTabWidth = clamp(iValue, TAB_WIDTH_MIN, TAB_WIDTH_MAX);
-	iValue = IniSectionGetInt(pIniSection, L"IndentWidth", INDENT_WIDTH_4);
+	iValue = section.GetInt(L"IndentWidth", INDENT_WIDTH_4);
 	tabSettings.globalIndentWidth = clamp(iValue, INDENT_WIDTH_MIN, INDENT_WIDTH_MAX);
-	tabSettings.globalTabsAsSpaces = IniSectionGetBool(pIniSection, L"TabsAsSpaces", false);
-	tabSettings.bTabIndents = IniSectionGetBool(pIniSection, L"TabIndents", true);
-	tabSettings.bBackspaceUnindents = (uint8_t)IniSectionGetInt(pIniSection, L"BackspaceUnindents", 2);
-	tabSettings.bDetectIndentation = IniSectionGetBool(pIniSection, L"DetectIndentation", true);
+	tabSettings.globalTabsAsSpaces = section.GetBool(L"TabsAsSpaces", false);
+	tabSettings.bTabIndents = section.GetBool(L"TabIndents", true);
+	tabSettings.bBackspaceUnindents = (uint8_t)section.GetInt(L"BackspaceUnindents", 2);
+	tabSettings.bDetectIndentation = section.GetBool(L"DetectIndentation", true);
 	// for toolbar state
 	fvCurFile.bTabsAsSpaces = tabSettings.globalTabsAsSpaces;
 	fvCurFile.fWordWrap = fWordWrapG;
 
-	bMarkLongLines = IniSectionGetBool(pIniSection, L"MarkLongLines", false);
-	iValue = IniSectionGetInt(pIniSection, L"LongLinesLimit", 80);
+	bMarkLongLines = section.GetBool(L"MarkLongLines", false);
+	iValue = section.GetInt(L"LongLinesLimit", 80);
 	iLongLinesLimitG = clamp(iValue, 0, NP2_LONG_LINE_LIMIT);
-	iValue = IniSectionGetInt(pIniSection, L"LongLineMode", EDGE_LINE);
+	iValue = section.GetInt(L"LongLineMode", EDGE_LINE);
 	iLongLineMode = clamp(iValue, EDGE_LINE, EDGE_BACKGROUND);
 
-	iValue = IniSectionGetInt(pIniSection, L"ZoomLevel", 100);
+	iValue = section.GetInt(L"ZoomLevel", 100);
 	iZoomLevel = clamp(iValue, SC_MIN_ZOOM_LEVEL, SC_MAX_ZOOM_LEVEL);
 
-	bShowBookmarkMargin = IniSectionGetBool(pIniSection, L"ShowBookmarkMargin", false);
-	bShowLineNumbers = IniSectionGetBool(pIniSection, L"ShowLineNumbers", true);
-	bShowCodeFolding = IniSectionGetBool(pIniSection, L"ShowCodeFolding", true);
+	bShowBookmarkMargin = section.GetBool(L"ShowBookmarkMargin", false);
+	bShowLineNumbers = section.GetBool(L"ShowLineNumbers", true);
+	bShowCodeFolding = section.GetBool(L"ShowCodeFolding", true);
 
-	bMarkOccurrences = IniSectionGetBool(pIniSection, L"MarkOccurrences", true);
-	bMarkOccurrencesMatchCase = IniSectionGetBool(pIniSection, L"MarkOccurrencesMatchCase", false);
-	bMarkOccurrencesMatchWords = IniSectionGetBool(pIniSection, L"MarkOccurrencesMatchWholeWords", false);
-	bMarkOccurrencesBookmark = IniSectionGetBool(pIniSection, L"MarkOccurrencesBookmark", false);
+	bMarkOccurrences = section.GetBool(L"MarkOccurrences", true);
+	bMarkOccurrencesMatchCase = section.GetBool(L"MarkOccurrencesMatchCase", false);
+	bMarkOccurrencesMatchWords = section.GetBool(L"MarkOccurrencesMatchWholeWords", false);
+	bMarkOccurrencesBookmark = section.GetBool(L"MarkOccurrencesBookmark", false);
 
-	bViewWhiteSpace = IniSectionGetBool(pIniSection, L"ViewWhiteSpace", false);
-	bViewEOLs = IniSectionGetBool(pIniSection, L"ViewEOLs", false);
-	callTipInfo.showCallTip = (ShowCallTip)IniSectionGetInt(pIniSection, L"ShowCallTip", ShowCallTip_None);
+	bViewWhiteSpace = section.GetBool(L"ViewWhiteSpace", false);
+	bViewEOLs = section.GetBool(L"ViewEOLs", false);
+	callTipInfo.showCallTip = (ShowCallTip)section.GetInt(L"ShowCallTip", ShowCallTip_None);
 
-	iValue = IniSectionGetInt(pIniSection, L"DefaultEncoding", -1);
+	iValue = section.GetInt(L"DefaultEncoding", -1);
 	iDefaultEncoding = Encoding_MapIniSetting(true, iValue);
-	bSkipUnicodeDetection = IniSectionGetBool(pIniSection, L"SkipUnicodeDetection", true);
-	bLoadANSIasUTF8 = IniSectionGetBool(pIniSection, L"LoadANSIasUTF8", true);
-	bLoadASCIIasUTF8 = IniSectionGetBool(pIniSection, L"LoadASCIIasUTF8", true);
-	bLoadNFOasOEM = IniSectionGetBool(pIniSection, L"LoadNFOasOEM", true);
-	bNoEncodingTags = IniSectionGetBool(pIniSection, L"NoEncodingTags", false);
+	bSkipUnicodeDetection = section.GetBool(L"SkipUnicodeDetection", true);
+	bLoadANSIasUTF8 = section.GetBool(L"LoadANSIasUTF8", true);
+	bLoadASCIIasUTF8 = section.GetBool(L"LoadASCIIasUTF8", true);
+	bLoadNFOasOEM = section.GetBool(L"LoadNFOasOEM", true);
+	bNoEncodingTags = section.GetBool(L"NoEncodingTags", false);
 
-	iValue = IniSectionGetInt(pIniSection, L"DefaultEOLMode", 0);
+	iValue = section.GetInt(L"DefaultEOLMode", 0);
 	iDefaultEOLMode = clamp(iValue, SC_EOL_CRLF, SC_EOL_LF);
 
-	bWarnLineEndings = IniSectionGetBool(pIniSection, L"WarnLineEndings", true);
-	bFixLineEndings = IniSectionGetBool(pIniSection, L"FixLineEndings", false);
-	bAutoStripBlanks = IniSectionGetBool(pIniSection, L"FixTrailingBlanks", false);
+	bWarnLineEndings = section.GetBool(L"WarnLineEndings", true);
+	bFixLineEndings = section.GetBool(L"FixLineEndings", false);
+	bAutoStripBlanks = section.GetBool(L"FixTrailingBlanks", false);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintHeader", PrintHeaderOption_FilenameAndDate);
+	iValue = section.GetInt(L"PrintHeader", PrintHeaderOption_FilenameAndDate);
 	iPrintHeader = clamp(static_cast<PrintHeaderOption>(iValue), PrintHeaderOption_FilenameAndDateTime, PrintHeaderOption_LeaveBlank);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintFooter", PrintFooterOption_PageNumber);
+	iValue = section.GetInt(L"PrintFooter", PrintFooterOption_PageNumber);
 	iPrintFooter = clamp(static_cast<PrintFooterOption>(iValue), PrintFooterOption_PageNumber, PrintFooterOption_LeaveBlank);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintColorMode", SC_PRINT_COLOURONWHITE);
+	iValue = section.GetInt(L"PrintColorMode", SC_PRINT_COLOURONWHITE);
 	iPrintColor = clamp(iValue, SC_PRINT_NORMAL, SC_PRINT_SCREENCOLOURS);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintZoom", 100);
+	iValue = section.GetInt(L"PrintZoom", 100);
 	iPrintZoom = clamp(iValue, SC_MIN_ZOOM_LEVEL, SC_MAX_ZOOM_LEVEL);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintMarginLeft", -1);
+	iValue = section.GetInt(L"PrintMarginLeft", -1);
 	pageSetupMargin.left = max(iValue, -1);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintMarginTop", -1);
+	iValue = section.GetInt(L"PrintMarginTop", -1);
 	pageSetupMargin.top = max(iValue, -1);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintMarginRight", -1);
+	iValue = section.GetInt(L"PrintMarginRight", -1);
 	pageSetupMargin.right = max(iValue, -1);
 
-	iValue = IniSectionGetInt(pIniSection, L"PrintMarginBottom", -1);
+	iValue = section.GetInt(L"PrintMarginBottom", -1);
 	pageSetupMargin.bottom = max(iValue, -1);
 
-	bSaveBeforeRunningTools = IniSectionGetBool(pIniSection, L"SaveBeforeRunningTools", false);
-	bOpenFolderWithMatepath = IniSectionGetBool(pIniSection, L"OpenFolderWithMatepath", true);
+	bSaveBeforeRunningTools = section.GetBool(L"SaveBeforeRunningTools", false);
+	bOpenFolderWithMatepath = section.GetBool(L"OpenFolderWithMatepath", true);
 
-	iValue = IniSectionGetInt(pIniSection, L"FileWatchingMode", FileWatchingMode_AutoReload);
+	iValue = section.GetInt(L"FileWatchingMode", FileWatchingMode_AutoReload);
 	iFileWatchingMode = clamp(static_cast<FileWatchingMode>(iValue), FileWatchingMode_None, FileWatchingMode_AutoReload);
-	iFileWatchingMethod = IniSectionGetBool(pIniSection, L"FileWatchingMethod", false);
-	bFileWatchingKeepAtEnd = IniSectionGetBool(pIniSection, L"FileWatchingKeepAtEnd", false);
-	bResetFileWatching = IniSectionGetBool(pIniSection, L"ResetFileWatching", false);
+	iFileWatchingMethod = section.GetBool(L"FileWatchingMethod", false);
+	bFileWatchingKeepAtEnd = section.GetBool(L"FileWatchingKeepAtEnd", false);
+	bResetFileWatching = section.GetBool(L"ResetFileWatching", false);
 
-	iAutoSaveOption = IniSectionGetInt(pIniSection, L"AutoSaveOption", AutoSaveOption_Default);
-	dwAutoSavePeriod = IniSectionGetInt(pIniSection, L"AutoSavePeriod", AutoSaveDefaultPeriod);
+	iAutoSaveOption = section.GetInt(L"AutoSaveOption", AutoSaveOption_Default);
+	dwAutoSavePeriod = section.GetInt(L"AutoSavePeriod", AutoSaveDefaultPeriod);
 
-	iValue = IniSectionGetInt(pIniSection, L"EscFunction", EscFunction_None);
+	iValue = section.GetInt(L"EscFunction", EscFunction_None);
 	iEscFunction = clamp(static_cast<EscFunction>(iValue), EscFunction_None, EscFunction_Exit);
 
-	bAlwaysOnTop = IniSectionGetBool(pIniSection, L"AlwaysOnTop", false);
-	bMinimizeToTray = IniSectionGetBool(pIniSection, L"MinimizeToTray", false);
-	bTransparentMode = IniSectionGetBool(pIniSection, L"TransparentMode", false);
-	iValue = IniSectionGetInt(pIniSection, L"EndAtLastLine", 1);
+	bAlwaysOnTop = section.GetBool(L"AlwaysOnTop", false);
+	bMinimizeToTray = section.GetBool(L"MinimizeToTray", false);
+	bTransparentMode = section.GetBool(L"TransparentMode", false);
+	iValue = section.GetInt(L"EndAtLastLine", 1);
 	iEndAtLastLine = clamp(iValue, 0, 4);
-	bEditLayoutRTL = IniSectionGetBool(pIniSection, L"EditLayoutRTL", false);
-	bWindowLayoutRTL = IniSectionGetBool(pIniSection, L"WindowLayoutRTL", false);
+	bEditLayoutRTL = section.GetBool(L"EditLayoutRTL", false);
+	bWindowLayoutRTL = section.GetBool(L"WindowLayoutRTL", false);
 
-	iValue = IniSectionGetInt(pIniSection, L"RenderingTechnology", GetDefualtRenderingTechnology());
+	iValue = section.GetInt(L"RenderingTechnology", GetDefualtRenderingTechnology());
 	iValue = clamp(iValue, SC_TECHNOLOGY_DEFAULT, SC_TECHNOLOGY_DIRECTWRITEDC);
 	iRenderingTechnology = bEditLayoutRTL ? SC_TECHNOLOGY_DEFAULT : iValue;
 
-	iValue = IniSectionGetInt(pIniSection, L"Bidirectional", SC_BIDIRECTIONAL_DISABLED);
+	iValue = section.GetInt(L"Bidirectional", SC_BIDIRECTIONAL_DISABLED);
 	iBidirectional = clamp(iValue, SC_BIDIRECTIONAL_DISABLED, SC_BIDIRECTIONAL_R2L);
 
-	iValue = IniSectionGetInt(pIniSection, L"FontQuality", SC_EFF_QUALITY_LCD_OPTIMIZED);
+	iValue = section.GetInt(L"FontQuality", SC_EFF_QUALITY_LCD_OPTIMIZED);
 	iFontQuality = clamp(iValue, SC_EFF_QUALITY_DEFAULT, SC_EFF_QUALITY_LCD_OPTIMIZED);
 
-	iValue = IniSectionGetInt(pIniSection, L"CaretStyle", CaretStyle_LineWidth1);
+	iValue = section.GetInt(L"CaretStyle", CaretStyle_LineWidth1);
 	bBlockCaretOutSelection = (iValue >= 100);
 	iValue %= 100;
 	bBlockCaretForOVRMode = (iValue >= 10);
 	iCaretStyle = clamp(static_cast<CaretStyle>(iValue % 10), CaretStyle_Block, CaretStyle_LineWidth3);
-	iCaretBlinkPeriod = IniSectionGetInt(pIniSection, L"CaretBlinkPeriod", -1);
-	bUseInlineIME = IniSectionGetBool(pIniSection, L"UseInlineIME", false);
+	iCaretBlinkPeriod = section.GetInt(L"CaretBlinkPeriod", -1);
+	bUseInlineIME = section.GetBool(L"UseInlineIME", false);
 
-	strValue = IniSectionGetValue(pIniSection, L"ToolbarButtons");
+	strValue = section.GetValue(L"ToolbarButtons");
 	if (StrIsEmpty(strValue)) {
 		memcpy(tchToolbarButtons, DefaultToolbarButtons, sizeof(DefaultToolbarButtons));
 	} else {
 		lstrcpyn(tchToolbarButtons, strValue, COUNTOF(tchToolbarButtons));
 	}
 
-	bShowMenu = IniSectionGetBool(pIniSection, L"ShowMenu", true);
-	bShowToolbar = IniSectionGetBool(pIniSection, L"ShowToolbar", true);
-	bAutoScaleToolbar = IniSectionGetBool(pIniSection, L"AutoScaleToolbar", true);
-	bShowStatusbar = IniSectionGetBool(pIniSection, L"ShowStatusbar", true);
+	bShowMenu = section.GetBool(L"ShowMenu", true);
+	bShowToolbar = section.GetBool(L"ShowToolbar", true);
+	bAutoScaleToolbar = section.GetBool(L"AutoScaleToolbar", true);
+	bShowStatusbar = section.GetBool(L"ShowStatusbar", true);
 
-	iValue = IniSectionGetInt(pIniSection, L"FullScreenMode", FullScreenMode_Default);
+	iValue = section.GetInt(L"FullScreenMode", FullScreenMode_Default);
 	iFullScreenMode = iValue;
 	bInFullScreenMode = iValue & FullScreenMode_OnStartup;
 
 	// toolbar image section
 	{
 		LoadIniSection(INI_SECTION_NAME_TOOLBAR_IMAGES, pIniSectionBuf, cchIniSection);
-		IniSectionParse(pIniSection, pIniSectionBuf);
+		section.Parse(pIniSectionBuf);
 
-		strValue = IniSectionGetValue(pIniSection, L"BitmapDefault");
+		strValue = section.GetValue(L"BitmapDefault");
 		if (StrNotEmpty(strValue)) {
 			tchToolbarBitmap = StrDup(strValue);
 		}
-		strValue = IniSectionGetValue(pIniSection, L"BitmapHot");
+		strValue = section.GetValue(L"BitmapHot");
 		if (StrNotEmpty(strValue)) {
 			tchToolbarBitmapHot = StrDup(strValue);
 		}
-		strValue = IniSectionGetValue(pIniSection, L"BitmapDisabled");
+		strValue = section.GetValue(L"BitmapDisabled");
 		if (StrNotEmpty(strValue)) {
 			tchToolbarBitmapDisabled = StrDup(strValue);
 		}
@@ -5628,61 +5618,61 @@ void LoadSettings(void) {
 		HMONITOR hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
 		GetWindowPositionSectionName(hMonitor, sectionName);
 		LoadIniSection(sectionName, pIniSectionBuf, cchIniSection);
-		IniSectionParse(pIniSection, pIniSectionBuf);
+		section.Parse(pIniSectionBuf);
 
 		// ignore window position if /p was specified
 		if (!flagPosParam) {
-			wi.x	= IniSectionGetInt(pIniSection, L"WindowPosX", CW_USEDEFAULT);
-			wi.y	= IniSectionGetInt(pIniSection, L"WindowPosY", CW_USEDEFAULT);
-			wi.cx	= IniSectionGetInt(pIniSection, L"WindowSizeX", CW_USEDEFAULT);
-			wi.cy	= IniSectionGetInt(pIniSection, L"WindowSizeY", CW_USEDEFAULT);
-			wi.max	= IniSectionGetBool(pIniSection, L"WindowMaximized", false);
+			wi.x	= section.GetInt(L"WindowPosX", CW_USEDEFAULT);
+			wi.y	= section.GetInt(L"WindowPosY", CW_USEDEFAULT);
+			wi.cx	= section.GetInt(L"WindowSizeX", CW_USEDEFAULT);
+			wi.cy	= section.GetInt(L"WindowSizeY", CW_USEDEFAULT);
+			wi.max	= section.GetBool(L"WindowMaximized", false);
 		}
 
-		cxRunDlg = IniSectionGetInt(pIniSection, L"RunDlgSizeX", 0);
-		cxEncodingDlg = IniSectionGetInt(pIniSection, L"EncodingDlgSizeX", 0);
-		cyEncodingDlg = IniSectionGetInt(pIniSection, L"EncodingDlgSizeY", 0);
+		cxRunDlg = section.GetInt(L"RunDlgSizeX", 0);
+		cxEncodingDlg = section.GetInt(L"EncodingDlgSizeX", 0);
+		cyEncodingDlg = section.GetInt(L"EncodingDlgSizeY", 0);
 
-		cxFileMRUDlg = IniSectionGetInt(pIniSection, L"FileMRUDlgSizeX", 0);
-		cyFileMRUDlg = IniSectionGetInt(pIniSection, L"FileMRUDlgSizeY", 0);
-		cxOpenWithDlg = IniSectionGetInt(pIniSection, L"OpenWithDlgSizeX", 0);
-		cyOpenWithDlg = IniSectionGetInt(pIniSection, L"OpenWithDlgSizeY", 0);
-		cxFavoritesDlg = IniSectionGetInt(pIniSection, L"FavoritesDlgSizeX", 0);
-		cyFavoritesDlg = IniSectionGetInt(pIniSection, L"FavoritesDlgSizeY", 0);
-		cxAddFavoritesDlg = IniSectionGetInt(pIniSection, L"AddFavoritesDlgSizeX", 0);
+		cxFileMRUDlg = section.GetInt(L"FileMRUDlgSizeX", 0);
+		cyFileMRUDlg = section.GetInt(L"FileMRUDlgSizeY", 0);
+		cxOpenWithDlg = section.GetInt(L"OpenWithDlgSizeX", 0);
+		cyOpenWithDlg = section.GetInt(L"OpenWithDlgSizeY", 0);
+		cxFavoritesDlg = section.GetInt(L"FavoritesDlgSizeX", 0);
+		cyFavoritesDlg = section.GetInt(L"FavoritesDlgSizeY", 0);
+		cxAddFavoritesDlg = section.GetInt(L"AddFavoritesDlgSizeX", 0);
 
-		cxModifyLinesDlg = IniSectionGetInt(pIniSection, L"ModifyLinesDlgSizeX", 0);
-		cyModifyLinesDlg = IniSectionGetInt(pIniSection, L"ModifyLinesDlgSizeY", 0);
-		cxEncloseSelectionDlg = IniSectionGetInt(pIniSection, L"EncloseSelectionDlgSizeX", 0);
-		cyEncloseSelectionDlg = IniSectionGetInt(pIniSection, L"EncloseSelectionDlgSizeY", 0);
-		cxInsertTagDlg = IniSectionGetInt(pIniSection, L"InsertTagDlgSizeX", 0);
-		cyInsertTagDlg = IniSectionGetInt(pIniSection, L"InsertTagDlgSizeY", 0);
+		cxModifyLinesDlg = section.GetInt(L"ModifyLinesDlgSizeX", 0);
+		cyModifyLinesDlg = section.GetInt(L"ModifyLinesDlgSizeY", 0);
+		cxEncloseSelectionDlg = section.GetInt(L"EncloseSelectionDlgSizeX", 0);
+		cyEncloseSelectionDlg = section.GetInt(L"EncloseSelectionDlgSizeY", 0);
+		cxInsertTagDlg = section.GetInt(L"InsertTagDlgSizeX", 0);
+		cyInsertTagDlg = section.GetInt(L"InsertTagDlgSizeY", 0);
 
-		xFindReplaceDlg = IniSectionGetInt(pIniSection, L"FindReplaceDlgPosX", 0);
-		yFindReplaceDlg = IniSectionGetInt(pIniSection, L"FindReplaceDlgPosY", 0);
-		cxFindReplaceDlg = IniSectionGetInt(pIniSection, L"FindReplaceDlgSizeX", 0);
+		xFindReplaceDlg = section.GetInt(L"FindReplaceDlgPosX", 0);
+		yFindReplaceDlg = section.GetInt(L"FindReplaceDlgPosY", 0);
+		cxFindReplaceDlg = section.GetInt(L"FindReplaceDlgSizeX", 0);
 
-		cxStyleSelectDlg = IniSectionGetInt(pIniSection, L"StyleSelectDlgSizeX", 0);
-		cyStyleSelectDlg = IniSectionGetInt(pIniSection, L"StyleSelectDlgSizeY", 0);
-		cxStyleCustomizeDlg = IniSectionGetInt(pIniSection, L"StyleCustomizeDlgSizeX", 0);
-		cyStyleCustomizeDlg = IniSectionGetInt(pIniSection, L"StyleCustomizeDlgSizeY", 0);
+		cxStyleSelectDlg = section.GetInt(L"StyleSelectDlgSizeX", 0);
+		cyStyleSelectDlg = section.GetInt(L"StyleSelectDlgSizeY", 0);
+		cxStyleCustomizeDlg = section.GetInt(L"StyleCustomizeDlgSizeX", 0);
+		cyStyleCustomizeDlg = section.GetInt(L"StyleCustomizeDlgSizeY", 0);
 	}
 
-	IniSectionFree(pIniSection);
+	section.Free();
 	NP2HeapFree(pIniSectionBuf);
 
 	// Scintilla Styles
 	Style_Load();
 }
 
-void SaveSettingsNow(bool bOnlySaveStyle, bool bQuiet) {
+void SaveSettingsNow(bool bOnlySaveStyle, bool bQuiet) noexcept {
 	bool bCreateFailure = false;
 
 	if (StrIsEmpty(szIniFile)) {
 		if (StrNotEmpty(szIniFile2)) {
 			if (CreateIniFile(szIniFile2)) {
 				lstrcpy(szIniFile, szIniFile2);
-				StrCpyExW(szIniFile2, L"");
+				StrCpyEx(szIniFile2, L"");
 			} else {
 				bCreateFailure = true;
 			}
@@ -5728,7 +5718,7 @@ void SaveSettingsNow(bool bOnlySaveStyle, bool bQuiet) {
 // SaveSettings()
 //
 //
-void SaveSettings(bool bSaveSettingsNow) {
+void SaveSettings(bool bSaveSettingsNow) noexcept {
 	if (!CreateIniFile(szIniFile)) {
 		return;
 	}
@@ -5739,153 +5729,152 @@ void SaveSettings(bool bSaveSettingsNow) {
 	}
 
 	WCHAR wchTmp[MAX_PATH];
-	WCHAR *pIniSectionBuf = (WCHAR *)NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_SETTINGS);
+	WCHAR *pIniSectionBuf = static_cast<WCHAR *>(NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_SETTINGS));
 	if (!bStickyWindowPosition) {
 		SaveWindowPosition(pIniSectionBuf);
 		memset(pIniSectionBuf, 0, 2*sizeof(WCHAR));
 	}
 
-	IniSectionOnSave section = { pIniSectionBuf };
-	IniSectionOnSave * const pIniSection = &section;
+	IniSectionBuilder section = { pIniSectionBuf };
 
-	//IniSectionSetInt(pIniSection, L"SettingsVersion", NP2SettingsVersion_Current);
-	IniSectionSetBoolEx(pIniSection, L"SaveSettings", bSaveSettings, true);
+	//section.SetInt(L"SettingsVersion", NP2SettingsVersion_Current);
+	section.SetBoolEx(L"SaveSettings", bSaveSettings, true);
 
 	PathRelativeToApp(tchOpenWithDir, wchTmp, FILE_ATTRIBUTE_DIRECTORY, true, flagPortableMyDocs);
-	IniSectionSetString(pIniSection, L"OpenWithDir", wchTmp);
+	section.SetString(L"OpenWithDir", wchTmp);
 	PathRelativeToApp(tchFavoritesDir, wchTmp, FILE_ATTRIBUTE_DIRECTORY, true, flagPortableMyDocs);
-	IniSectionSetString(pIniSection, L"Favorites", wchTmp);
-	IniSectionSetIntEx(pIniSection, L"PathNameFormat", (int)iPathNameFormat, TitlePathNameFormat_NameFirst);
+	section.SetString(L"Favorites", wchTmp);
+	section.SetIntEx(L"PathNameFormat", (int)iPathNameFormat, TitlePathNameFormat_NameFirst);
 	if (!bStickyWindowPosition) {
-		IniSectionSetInt(pIniSection, L"WindowPosX", wi.x);
-		IniSectionSetInt(pIniSection, L"WindowPosY", wi.y);
+		section.SetInt(L"WindowPosX", wi.x);
+		section.SetInt(L"WindowPosY", wi.y);
 	}
 
-	IniSectionSetBoolEx(pIniSection, L"SaveRecentFiles", bSaveRecentFiles, false);
-	IniSectionSetBoolEx(pIniSection, L"SaveFindReplace", bSaveFindReplace, false);
-	IniSectionSetBoolEx(pIniSection, L"CloseFind", efrData.bFindClose, false);
-	IniSectionSetBoolEx(pIniSection, L"CloseReplace", efrData.bReplaceClose, false);
-	IniSectionSetBoolEx(pIniSection, L"NoFindWrap", efrData.bNoFindWrap, false);
-	IniSectionSetBoolEx(pIniSection, L"FindReplaceTransparentMode", bFindReplaceTransparentMode, true);
-	IniSectionSetBoolEx(pIniSection, L"FindReplaceUseMonospacedFont", bFindReplaceUseMonospacedFont, false);
-	IniSectionSetBoolEx(pIniSection, L"FindReplaceFindAllBookmark", bFindReplaceFindAllBookmark, false);
+	section.SetBoolEx(L"SaveRecentFiles", bSaveRecentFiles, false);
+	section.SetBoolEx(L"SaveFindReplace", bSaveFindReplace, false);
+	section.SetBoolEx(L"CloseFind", efrData.bFindClose, false);
+	section.SetBoolEx(L"CloseReplace", efrData.bReplaceClose, false);
+	section.SetBoolEx(L"NoFindWrap", efrData.bNoFindWrap, false);
+	section.SetBoolEx(L"FindReplaceTransparentMode", bFindReplaceTransparentMode, true);
+	section.SetBoolEx(L"FindReplaceUseMonospacedFont", bFindReplaceUseMonospacedFont, false);
+	section.SetBoolEx(L"FindReplaceFindAllBookmark", bFindReplaceFindAllBookmark, false);
 	if (bSaveFindReplace) {
-		IniSectionSetBoolEx(pIniSection, L"FindReplaceMatchCase", (efrData.fuFlags & SCFIND_MATCHCASE), false);
-		IniSectionSetBoolEx(pIniSection, L"FindReplaceMatchWholeWorldOnly", (efrData.fuFlags & SCFIND_WHOLEWORD), false);
-		IniSectionSetBoolEx(pIniSection, L"FindReplaceMatchBeginingWordOnly", (efrData.fuFlags & SCFIND_WORDSTART), false);
-		IniSectionSetBoolEx(pIniSection, L"FindReplaceRegExpSearch", (efrData.fuFlags & SCFIND_REGEXP), false);
-		IniSectionSetBoolEx(pIniSection, L"FindReplaceTransformBackslash", efrData.bTransformBS, false);
-		IniSectionSetBoolEx(pIniSection, L"FindReplaceWildcardSearch", efrData.bWildcardSearch, false);
+		section.SetBoolEx(L"FindReplaceMatchCase", (efrData.fuFlags & SCFIND_MATCHCASE), false);
+		section.SetBoolEx(L"FindReplaceMatchWholeWorldOnly", (efrData.fuFlags & SCFIND_WHOLEWORD), false);
+		section.SetBoolEx(L"FindReplaceMatchBeginingWordOnly", (efrData.fuFlags & SCFIND_WORDSTART), false);
+		section.SetBoolEx(L"FindReplaceRegExpSearch", (efrData.fuFlags & SCFIND_REGEXP), false);
+		section.SetBoolEx(L"FindReplaceTransformBackslash", efrData.bTransformBS, false);
+		section.SetBoolEx(L"FindReplaceWildcardSearch", efrData.bWildcardSearch, false);
 	}
 
-	IniSectionSetBoolEx(pIniSection, L"WordWrap", fWordWrapG, true);
-	IniSectionSetIntEx(pIniSection, L"WordWrapMode", iWordWrapMode, SC_WRAP_AUTO);
-	IniSectionSetIntEx(pIniSection, L"WordWrapIndent", iWordWrapIndent, EditWrapIndent_None);
-	IniSectionSetIntEx(pIniSection, L"WordWrapSymbols", iWordWrapSymbols, EditWrapSymbol_DefaultValue);
-	IniSectionSetBoolEx(pIniSection, L"ShowWordWrapSymbols", bShowWordWrapSymbols, false);
-	IniSectionSetBoolEx(pIniSection, L"WordWrapSelectSubLine", bWordWrapSelectSubLine, false);
-	IniSectionSetBoolEx(pIniSection, L"ShowUnicodeControlCharacter", bShowUnicodeControlCharacter, false);
-	IniSectionSetBoolEx(pIniSection, L"MatchBraces", bMatchBraces, true);
-	IniSectionSetBoolEx(pIniSection, L"HighlightCurrentBlock", bHighlightCurrentBlock, true);
+	section.SetBoolEx(L"WordWrap", fWordWrapG, true);
+	section.SetIntEx(L"WordWrapMode", iWordWrapMode, SC_WRAP_AUTO);
+	section.SetIntEx(L"WordWrapIndent", iWordWrapIndent, EditWrapIndent_None);
+	section.SetIntEx(L"WordWrapSymbols", iWordWrapSymbols, EditWrapSymbol_DefaultValue);
+	section.SetBoolEx(L"ShowWordWrapSymbols", bShowWordWrapSymbols, false);
+	section.SetBoolEx(L"WordWrapSelectSubLine", bWordWrapSelectSubLine, false);
+	section.SetBoolEx(L"ShowUnicodeControlCharacter", bShowUnicodeControlCharacter, false);
+	section.SetBoolEx(L"MatchBraces", bMatchBraces, true);
+	section.SetBoolEx(L"HighlightCurrentBlock", bHighlightCurrentBlock, true);
 	int iValue = (int)iHighlightCurrentLine + ((int)bHighlightCurrentSubLine*10);
-	IniSectionSetIntEx(pIniSection, L"HighlightCurrentLine", iValue, 10 + LineHighlightMode_OutlineFrame);
-	IniSectionSetBoolEx(pIniSection, L"ShowIndentGuides", bShowIndentGuides, false);
+	section.SetIntEx(L"HighlightCurrentLine", iValue, 10 + LineHighlightMode_OutlineFrame);
+	section.SetBoolEx(L"ShowIndentGuides", bShowIndentGuides, false);
 
-	IniSectionSetBoolEx(pIniSection, L"AutoIndent", autoCompletionConfig.bIndentText, true);
-	IniSectionSetBoolEx(pIniSection, L"AutoCloseTags", autoCompletionConfig.bCloseTags, true);
-	IniSectionSetBoolEx(pIniSection, L"AutoCompleteWords", autoCompletionConfig.bCompleteWord, true);
-	IniSectionSetBoolEx(pIniSection, L"AutoCScanWordsInDocument", autoCompletionConfig.bScanWordsInDocument, true);
+	section.SetBoolEx(L"AutoIndent", autoCompletionConfig.bIndentText, true);
+	section.SetBoolEx(L"AutoCloseTags", autoCompletionConfig.bCloseTags, true);
+	section.SetBoolEx(L"AutoCompleteWords", autoCompletionConfig.bCompleteWord, true);
+	section.SetBoolEx(L"AutoCScanWordsInDocument", autoCompletionConfig.bScanWordsInDocument, true);
 	iValue = autoCompletionConfig.fCompleteScope | (autoCompletionConfig.fScanWordScope << 4);
-	IniSectionSetIntEx(pIniSection, L"AutoCompleteScope", iValue, AutoCompleteScope_Default);
-	IniSectionSetIntEx(pIniSection, L"AutoCScanWordsTimeout", autoCompletionConfig.dwScanWordsTimeout, AUTOC_SCAN_WORDS_DEFAULT_TIMEOUT);
-	IniSectionSetBoolEx(pIniSection, L"AutoCEnglishIMEModeOnly", autoCompletionConfig.bEnglistIMEModeOnly, false);
-	IniSectionSetBoolEx(pIniSection, L"AutoCIgnoreCase", autoCompletionConfig.bIgnoreCase, false);
-	IniSectionSetBoolEx(pIniSection, L"LaTeXInputMethod", autoCompletionConfig.bLaTeXInputMethod, false);
-	IniSectionSetIntEx(pIniSection, L"AutoCVisibleItemCount", autoCompletionConfig.iVisibleItemCount, 16);
-	IniSectionSetIntEx(pIniSection, L"AutoCMinWordLength", autoCompletionConfig.iMinWordLength, 1);
-	IniSectionSetIntEx(pIniSection, L"AutoCMinNumberLength", autoCompletionConfig.iMinNumberLength, 3);
-	IniSectionSetIntEx(pIniSection, L"AutoCFillUpMask", autoCompletionConfig.fAutoCompleteFillUpMask, AutoCompleteFillUpMask_Default);
-	IniSectionSetIntEx(pIniSection, L"AutoInsertMask", autoCompletionConfig.fAutoInsertMask, AutoInsertMask_Default);
-	IniSectionSetIntEx(pIniSection, L"AsmLineCommentChar", autoCompletionConfig.iAsmLineCommentChar, AsmLineCommentChar_Semicolon);
-	IniSectionSetStringEx(pIniSection, L"AutoCFillUpPunctuation", autoCompletionConfig.wszAutoCompleteFillUp, AUTO_COMPLETION_FILLUP_DEFAULT);
-	IniSectionSetIntEx(pIniSection, L"SelectOption", iSelectOption, SelectOption_Default);
-	IniSectionSetIntEx(pIniSection, L"LineSelection", iLineSelectionMode, LineSelectionMode_VisualStudio);
-	IniSectionSetIntEx(pIniSection, L"TabWidth", tabSettings.globalTabWidth, TAB_WIDTH_4);
-	IniSectionSetIntEx(pIniSection, L"IndentWidth", tabSettings.globalIndentWidth, INDENT_WIDTH_4);
-	IniSectionSetBoolEx(pIniSection, L"TabsAsSpaces", tabSettings.globalTabsAsSpaces, false);
-	IniSectionSetBoolEx(pIniSection, L"TabIndents", tabSettings.bTabIndents, true);
-	IniSectionSetIntEx(pIniSection, L"BackspaceUnindents", tabSettings.bBackspaceUnindents, 2);
-	IniSectionSetBoolEx(pIniSection, L"DetectIndentation", tabSettings.bDetectIndentation, true);
-	IniSectionSetBoolEx(pIniSection, L"MarkLongLines", bMarkLongLines, false);
-	IniSectionSetIntEx(pIniSection, L"LongLinesLimit", iLongLinesLimitG, 80);
-	IniSectionSetIntEx(pIniSection, L"LongLineMode", iLongLineMode, EDGE_LINE);
-	IniSectionSetIntEx(pIniSection, L"ZoomLevel", iZoomLevel, 100);
-	IniSectionSetBoolEx(pIniSection, L"ShowBookmarkMargin", bShowBookmarkMargin, false);
-	IniSectionSetBoolEx(pIniSection, L"ShowLineNumbers", bShowLineNumbers, true);
-	IniSectionSetBoolEx(pIniSection, L"ShowCodeFolding", bShowCodeFolding, true);
-	IniSectionSetBoolEx(pIniSection, L"MarkOccurrences", bMarkOccurrences, true);
-	IniSectionSetBoolEx(pIniSection, L"MarkOccurrencesMatchCase", bMarkOccurrencesMatchCase, false);
-	IniSectionSetBoolEx(pIniSection, L"MarkOccurrencesMatchWholeWords", bMarkOccurrencesMatchWords, false);
-	IniSectionSetBoolEx(pIniSection, L"MarkOccurrencesBookmark", bMarkOccurrencesBookmark, false);
-	IniSectionSetBoolEx(pIniSection, L"ViewWhiteSpace", bViewWhiteSpace, false);
-	IniSectionSetBoolEx(pIniSection, L"ViewEOLs", bViewEOLs, false);
-	IniSectionSetIntEx(pIniSection, L"ShowCallTip", (int)callTipInfo.showCallTip, ShowCallTip_None);
+	section.SetIntEx(L"AutoCompleteScope", iValue, AutoCompleteScope_Default);
+	section.SetIntEx(L"AutoCScanWordsTimeout", autoCompletionConfig.dwScanWordsTimeout, AUTOC_SCAN_WORDS_DEFAULT_TIMEOUT);
+	section.SetBoolEx(L"AutoCEnglishIMEModeOnly", autoCompletionConfig.bEnglistIMEModeOnly, false);
+	section.SetBoolEx(L"AutoCIgnoreCase", autoCompletionConfig.bIgnoreCase, false);
+	section.SetBoolEx(L"LaTeXInputMethod", autoCompletionConfig.bLaTeXInputMethod, false);
+	section.SetIntEx(L"AutoCVisibleItemCount", autoCompletionConfig.iVisibleItemCount, 16);
+	section.SetIntEx(L"AutoCMinWordLength", autoCompletionConfig.iMinWordLength, 1);
+	section.SetIntEx(L"AutoCMinNumberLength", autoCompletionConfig.iMinNumberLength, 3);
+	section.SetIntEx(L"AutoCFillUpMask", autoCompletionConfig.fAutoCompleteFillUpMask, AutoCompleteFillUpMask_Default);
+	section.SetIntEx(L"AutoInsertMask", autoCompletionConfig.fAutoInsertMask, AutoInsertMask_Default);
+	section.SetIntEx(L"AsmLineCommentChar", autoCompletionConfig.iAsmLineCommentChar, AsmLineCommentChar_Semicolon);
+	section.SetStringEx(L"AutoCFillUpPunctuation", autoCompletionConfig.wszAutoCompleteFillUp, AUTO_COMPLETION_FILLUP_DEFAULT);
+	section.SetIntEx(L"SelectOption", iSelectOption, SelectOption_Default);
+	section.SetIntEx(L"LineSelection", iLineSelectionMode, LineSelectionMode_VisualStudio);
+	section.SetIntEx(L"TabWidth", tabSettings.globalTabWidth, TAB_WIDTH_4);
+	section.SetIntEx(L"IndentWidth", tabSettings.globalIndentWidth, INDENT_WIDTH_4);
+	section.SetBoolEx(L"TabsAsSpaces", tabSettings.globalTabsAsSpaces, false);
+	section.SetBoolEx(L"TabIndents", tabSettings.bTabIndents, true);
+	section.SetIntEx(L"BackspaceUnindents", tabSettings.bBackspaceUnindents, 2);
+	section.SetBoolEx(L"DetectIndentation", tabSettings.bDetectIndentation, true);
+	section.SetBoolEx(L"MarkLongLines", bMarkLongLines, false);
+	section.SetIntEx(L"LongLinesLimit", iLongLinesLimitG, 80);
+	section.SetIntEx(L"LongLineMode", iLongLineMode, EDGE_LINE);
+	section.SetIntEx(L"ZoomLevel", iZoomLevel, 100);
+	section.SetBoolEx(L"ShowBookmarkMargin", bShowBookmarkMargin, false);
+	section.SetBoolEx(L"ShowLineNumbers", bShowLineNumbers, true);
+	section.SetBoolEx(L"ShowCodeFolding", bShowCodeFolding, true);
+	section.SetBoolEx(L"MarkOccurrences", bMarkOccurrences, true);
+	section.SetBoolEx(L"MarkOccurrencesMatchCase", bMarkOccurrencesMatchCase, false);
+	section.SetBoolEx(L"MarkOccurrencesMatchWholeWords", bMarkOccurrencesMatchWords, false);
+	section.SetBoolEx(L"MarkOccurrencesBookmark", bMarkOccurrencesBookmark, false);
+	section.SetBoolEx(L"ViewWhiteSpace", bViewWhiteSpace, false);
+	section.SetBoolEx(L"ViewEOLs", bViewEOLs, false);
+	section.SetIntEx(L"ShowCallTip", (int)callTipInfo.showCallTip, ShowCallTip_None);
 
 	if (iDefaultEncoding != CPI_GLOBAL_DEFAULT) {
 		iValue = Encoding_MapIniSetting(false, iDefaultEncoding);
-		IniSectionSetInt(pIniSection, L"DefaultEncoding", iValue);
+		section.SetInt(L"DefaultEncoding", iValue);
 	}
-	IniSectionSetBoolEx(pIniSection, L"SkipUnicodeDetection", bSkipUnicodeDetection, true);
-	IniSectionSetBoolEx(pIniSection, L"LoadANSIasUTF8", bLoadANSIasUTF8, true);
-	IniSectionSetBoolEx(pIniSection, L"LoadASCIIasUTF8", bLoadASCIIasUTF8, true);
-	IniSectionSetBoolEx(pIniSection, L"LoadNFOasOEM", bLoadNFOasOEM, true);
-	IniSectionSetBoolEx(pIniSection, L"NoEncodingTags", bNoEncodingTags, false);
+	section.SetBoolEx(L"SkipUnicodeDetection", bSkipUnicodeDetection, true);
+	section.SetBoolEx(L"LoadANSIasUTF8", bLoadANSIasUTF8, true);
+	section.SetBoolEx(L"LoadASCIIasUTF8", bLoadASCIIasUTF8, true);
+	section.SetBoolEx(L"LoadNFOasOEM", bLoadNFOasOEM, true);
+	section.SetBoolEx(L"NoEncodingTags", bNoEncodingTags, false);
 
-	IniSectionSetIntEx(pIniSection, L"DefaultEOLMode", iDefaultEOLMode, 0);
-	IniSectionSetBoolEx(pIniSection, L"WarnLineEndings", bWarnLineEndings, true);
-	IniSectionSetBoolEx(pIniSection, L"FixLineEndings", bFixLineEndings, false);
-	IniSectionSetBoolEx(pIniSection, L"FixTrailingBlanks", bAutoStripBlanks, false);
+	section.SetIntEx(L"DefaultEOLMode", iDefaultEOLMode, 0);
+	section.SetBoolEx(L"WarnLineEndings", bWarnLineEndings, true);
+	section.SetBoolEx(L"FixLineEndings", bFixLineEndings, false);
+	section.SetBoolEx(L"FixTrailingBlanks", bAutoStripBlanks, false);
 
-	IniSectionSetIntEx(pIniSection, L"PrintHeader", (int)iPrintHeader, PrintHeaderOption_FilenameAndDate);
-	IniSectionSetIntEx(pIniSection, L"PrintFooter", (int)iPrintFooter, PrintFooterOption_PageNumber);
-	IniSectionSetIntEx(pIniSection, L"PrintColorMode", iPrintColor, SC_PRINT_COLOURONWHITE);
-	IniSectionSetIntEx(pIniSection, L"PrintZoom", iPrintZoom, 100);
-	IniSectionSetIntEx(pIniSection, L"PrintMarginLeft", pageSetupMargin.left, -1);
-	IniSectionSetIntEx(pIniSection, L"PrintMarginTop", pageSetupMargin.top, -1);
-	IniSectionSetIntEx(pIniSection, L"PrintMarginRight", pageSetupMargin.right, -1);
-	IniSectionSetIntEx(pIniSection, L"PrintMarginBottom", pageSetupMargin.bottom, -1);
+	section.SetIntEx(L"PrintHeader", (int)iPrintHeader, PrintHeaderOption_FilenameAndDate);
+	section.SetIntEx(L"PrintFooter", (int)iPrintFooter, PrintFooterOption_PageNumber);
+	section.SetIntEx(L"PrintColorMode", iPrintColor, SC_PRINT_COLOURONWHITE);
+	section.SetIntEx(L"PrintZoom", iPrintZoom, 100);
+	section.SetIntEx(L"PrintMarginLeft", pageSetupMargin.left, -1);
+	section.SetIntEx(L"PrintMarginTop", pageSetupMargin.top, -1);
+	section.SetIntEx(L"PrintMarginRight", pageSetupMargin.right, -1);
+	section.SetIntEx(L"PrintMarginBottom", pageSetupMargin.bottom, -1);
 
-	IniSectionSetBoolEx(pIniSection, L"SaveBeforeRunningTools", bSaveBeforeRunningTools, false);
-	IniSectionSetBoolEx(pIniSection, L"OpenFolderWithMatepath", bOpenFolderWithMatepath, true);
+	section.SetBoolEx(L"SaveBeforeRunningTools", bSaveBeforeRunningTools, false);
+	section.SetBoolEx(L"OpenFolderWithMatepath", bOpenFolderWithMatepath, true);
 
-	IniSectionSetIntEx(pIniSection, L"FileWatchingMode", iFileWatchingMode, FileWatchingMode_AutoReload);
-	IniSectionSetBoolEx(pIniSection, L"FileWatchingMethod", iFileWatchingMethod, false);
-	IniSectionSetBoolEx(pIniSection, L"FileWatchingKeepAtEnd", bFileWatchingKeepAtEnd, false);
-	IniSectionSetBoolEx(pIniSection, L"ResetFileWatching", bResetFileWatching, false);
-	IniSectionSetIntEx(pIniSection, L"AutoSaveOption", iAutoSaveOption, AutoSaveOption_Default);
-	IniSectionSetIntEx(pIniSection, L"AutoSavePeriod", dwAutoSavePeriod, AutoSaveDefaultPeriod);
+	section.SetIntEx(L"FileWatchingMode", iFileWatchingMode, FileWatchingMode_AutoReload);
+	section.SetBoolEx(L"FileWatchingMethod", iFileWatchingMethod, false);
+	section.SetBoolEx(L"FileWatchingKeepAtEnd", bFileWatchingKeepAtEnd, false);
+	section.SetBoolEx(L"ResetFileWatching", bResetFileWatching, false);
+	section.SetIntEx(L"AutoSaveOption", iAutoSaveOption, AutoSaveOption_Default);
+	section.SetIntEx(L"AutoSavePeriod", dwAutoSavePeriod, AutoSaveDefaultPeriod);
 
-	IniSectionSetIntEx(pIniSection, L"EscFunction", (int)iEscFunction, EscFunction_None);
-	IniSectionSetBoolEx(pIniSection, L"AlwaysOnTop", bAlwaysOnTop, false);
-	IniSectionSetBoolEx(pIniSection, L"MinimizeToTray", bMinimizeToTray, false);
-	IniSectionSetBoolEx(pIniSection, L"TransparentMode", bTransparentMode, false);
-	IniSectionSetIntEx(pIniSection, L"EndAtLastLine", iEndAtLastLine, 1);
-	IniSectionSetBoolEx(pIniSection, L"EditLayoutRTL", bEditLayoutRTL, false);
-	IniSectionSetBoolEx(pIniSection, L"WindowLayoutRTL", bWindowLayoutRTL, false);
-	IniSectionSetIntEx(pIniSection, L"RenderingTechnology", iRenderingTechnology, GetDefualtRenderingTechnology());
-	IniSectionSetIntEx(pIniSection, L"Bidirectional", iBidirectional, SC_BIDIRECTIONAL_DISABLED);
-	IniSectionSetIntEx(pIniSection, L"FontQuality", iFontQuality, SC_EFF_QUALITY_LCD_OPTIMIZED);
+	section.SetIntEx(L"EscFunction", (int)iEscFunction, EscFunction_None);
+	section.SetBoolEx(L"AlwaysOnTop", bAlwaysOnTop, false);
+	section.SetBoolEx(L"MinimizeToTray", bMinimizeToTray, false);
+	section.SetBoolEx(L"TransparentMode", bTransparentMode, false);
+	section.SetIntEx(L"EndAtLastLine", iEndAtLastLine, 1);
+	section.SetBoolEx(L"EditLayoutRTL", bEditLayoutRTL, false);
+	section.SetBoolEx(L"WindowLayoutRTL", bWindowLayoutRTL, false);
+	section.SetIntEx(L"RenderingTechnology", iRenderingTechnology, GetDefualtRenderingTechnology());
+	section.SetIntEx(L"Bidirectional", iBidirectional, SC_BIDIRECTIONAL_DISABLED);
+	section.SetIntEx(L"FontQuality", iFontQuality, SC_EFF_QUALITY_LCD_OPTIMIZED);
 	iValue = (int)iCaretStyle + ((int)bBlockCaretForOVRMode)*10 + ((int)bBlockCaretOutSelection)*100;
-	IniSectionSetIntEx(pIniSection, L"CaretStyle", iValue, CaretStyle_LineWidth1);
-	IniSectionSetIntEx(pIniSection, L"CaretBlinkPeriod", iCaretBlinkPeriod, -1);
-	IniSectionSetBoolEx(pIniSection, L"UseInlineIME", bUseInlineIME, false);
+	section.SetIntEx(L"CaretStyle", iValue, CaretStyle_LineWidth1);
+	section.SetIntEx(L"CaretBlinkPeriod", iCaretBlinkPeriod, -1);
+	section.SetBoolEx(L"UseInlineIME", bUseInlineIME, false);
 	Toolbar_GetButtons(hwndToolbar, TOOLBAR_COMMAND_BASE, tchToolbarButtons, COUNTOF(tchToolbarButtons));
-	IniSectionSetStringEx(pIniSection, L"ToolbarButtons", tchToolbarButtons, DefaultToolbarButtons);
-	IniSectionSetBoolEx(pIniSection, L"ShowMenu", bShowMenu, true);
-	IniSectionSetBoolEx(pIniSection, L"ShowToolbar", bShowToolbar, true);
-	IniSectionSetBoolEx(pIniSection, L"AutoScaleToolbar", bAutoScaleToolbar, true);
-	IniSectionSetBoolEx(pIniSection, L"ShowStatusbar", bShowStatusbar, true);
-	IniSectionSetIntEx(pIniSection, L"FullScreenMode", iFullScreenMode, FullScreenMode_Default);
+	section.SetStringEx(L"ToolbarButtons", tchToolbarButtons, DefaultToolbarButtons);
+	section.SetBoolEx(L"ShowMenu", bShowMenu, true);
+	section.SetBoolEx(L"ShowToolbar", bShowToolbar, true);
+	section.SetBoolEx(L"AutoScaleToolbar", bAutoScaleToolbar, true);
+	section.SetBoolEx(L"ShowStatusbar", bShowStatusbar, true);
+	section.SetIntEx(L"FullScreenMode", iFullScreenMode, FullScreenMode_Default);
 
 	SaveIniSection(INI_SECTION_NAME_SETTINGS, pIniSectionBuf);
 	NP2HeapFree(pIniSectionBuf);
@@ -5893,9 +5882,8 @@ void SaveSettings(bool bSaveSettingsNow) {
 	Style_Save();
 }
 
-void SaveWindowPosition(WCHAR *pIniSectionBuf) {
-	IniSectionOnSave section = { pIniSectionBuf };
-	IniSectionOnSave *const pIniSection = &section;
+void SaveWindowPosition(WCHAR *pIniSectionBuf) noexcept{
+	IniSectionBuilder section = { pIniSectionBuf };
 
 	WCHAR sectionName[96];
 	GetWindowPositionSectionName(hCurrentMonitor, sectionName);
@@ -5913,39 +5901,39 @@ void SaveWindowPosition(WCHAR *pIniSectionBuf) {
 		wi.max = (IsZoomed(hwndMain) || (wndpl.flags & WPF_RESTORETOMAXIMIZED));
 	}
 
-	IniSectionSetInt(pIniSection, L"WindowPosX", wi.x);
-	IniSectionSetInt(pIniSection, L"WindowPosY", wi.y);
-	IniSectionSetInt(pIniSection, L"WindowSizeX", wi.cx);
-	IniSectionSetInt(pIniSection, L"WindowSizeY", wi.cy);
-	IniSectionSetBoolEx(pIniSection, L"WindowMaximized", wi.max, false);
+	section.SetInt(L"WindowPosX", wi.x);
+	section.SetInt(L"WindowPosY", wi.y);
+	section.SetInt(L"WindowSizeX", wi.cx);
+	section.SetInt(L"WindowSizeY", wi.cy);
+	section.SetBoolEx(L"WindowMaximized", wi.max, false);
 
-	IniSectionSetIntEx(pIniSection, L"RunDlgSizeX", cxRunDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"EncodingDlgSizeX", cxEncodingDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"EncodingDlgSizeY", cyEncodingDlg, 0);
+	section.SetIntEx(L"RunDlgSizeX", cxRunDlg, 0);
+	section.SetIntEx(L"EncodingDlgSizeX", cxEncodingDlg, 0);
+	section.SetIntEx(L"EncodingDlgSizeY", cyEncodingDlg, 0);
 
-	IniSectionSetIntEx(pIniSection, L"FileMRUDlgSizeX", cxFileMRUDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"FileMRUDlgSizeY", cyFileMRUDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"OpenWithDlgSizeX", cxOpenWithDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"OpenWithDlgSizeY", cyOpenWithDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"FavoritesDlgSizeX", cxFavoritesDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"FavoritesDlgSizeY", cyFavoritesDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"AddFavoritesDlgSizeX", cxAddFavoritesDlg, 0);
+	section.SetIntEx(L"FileMRUDlgSizeX", cxFileMRUDlg, 0);
+	section.SetIntEx(L"FileMRUDlgSizeY", cyFileMRUDlg, 0);
+	section.SetIntEx(L"OpenWithDlgSizeX", cxOpenWithDlg, 0);
+	section.SetIntEx(L"OpenWithDlgSizeY", cyOpenWithDlg, 0);
+	section.SetIntEx(L"FavoritesDlgSizeX", cxFavoritesDlg, 0);
+	section.SetIntEx(L"FavoritesDlgSizeY", cyFavoritesDlg, 0);
+	section.SetIntEx(L"AddFavoritesDlgSizeX", cxAddFavoritesDlg, 0);
 
-	IniSectionSetIntEx(pIniSection, L"ModifyLinesDlgSizeX", cxModifyLinesDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"ModifyLinesDlgSizeY", cyModifyLinesDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"EncloseSelectionDlgSizeX", cxEncloseSelectionDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"EncloseSelectionDlgSizeY", cyEncloseSelectionDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"InsertTagDlgSizeX", cxInsertTagDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"InsertTagDlgSizeY", cyInsertTagDlg, 0);
+	section.SetIntEx(L"ModifyLinesDlgSizeX", cxModifyLinesDlg, 0);
+	section.SetIntEx(L"ModifyLinesDlgSizeY", cyModifyLinesDlg, 0);
+	section.SetIntEx(L"EncloseSelectionDlgSizeX", cxEncloseSelectionDlg, 0);
+	section.SetIntEx(L"EncloseSelectionDlgSizeY", cyEncloseSelectionDlg, 0);
+	section.SetIntEx(L"InsertTagDlgSizeX", cxInsertTagDlg, 0);
+	section.SetIntEx(L"InsertTagDlgSizeY", cyInsertTagDlg, 0);
 
-	IniSectionSetIntEx(pIniSection, L"FindReplaceDlgPosX", xFindReplaceDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"FindReplaceDlgPosY", yFindReplaceDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"FindReplaceDlgSizeX", cxFindReplaceDlg, 0);
+	section.SetIntEx(L"FindReplaceDlgPosX", xFindReplaceDlg, 0);
+	section.SetIntEx(L"FindReplaceDlgPosY", yFindReplaceDlg, 0);
+	section.SetIntEx(L"FindReplaceDlgSizeX", cxFindReplaceDlg, 0);
 
-	IniSectionSetIntEx(pIniSection, L"StyleSelectDlgSizeX", cxStyleSelectDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"StyleSelectDlgSizeY", cyStyleSelectDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"StyleCustomizeDlgSizeX", cxStyleCustomizeDlg, 0);
-	IniSectionSetIntEx(pIniSection, L"StyleCustomizeDlgSizeY", cyStyleCustomizeDlg, 0);
+	section.SetIntEx(L"StyleSelectDlgSizeX", cxStyleSelectDlg, 0);
+	section.SetIntEx(L"StyleSelectDlgSizeY", cyStyleSelectDlg, 0);
+	section.SetIntEx(L"StyleCustomizeDlgSizeX", cxStyleCustomizeDlg, 0);
+	section.SetIntEx(L"StyleCustomizeDlgSizeY", cyStyleCustomizeDlg, 0);
 
 	SaveIniSection(sectionName, pIniSectionBuf);
 }
@@ -5999,13 +5987,13 @@ CommandParseState ParseCommandLineEncoding(LPCWSTR opt) noexcept {
 	if (*opt == '-') {
 		++opt;
 	}
-	if (StrHasPrefixCase(opt, L"LE")){
+	if (StrStartsWithCase(opt, L"LE")){
 		flag = IDM_ENCODING_UNICODE;
 		opt += CSTRLEN(L"LE");
 		if (*opt == '-') {
 			++opt;
 		}
-	} else if (StrHasPrefixCase(opt, L"BE")) {
+	} else if (StrStartsWithCase(opt, L"BE")) {
 		flag = IDM_ENCODING_UNICODEREV;
 		opt += CSTRLEN(L"BE");
 		if (*opt == '-') {
@@ -6213,7 +6201,7 @@ CommandParseState ParseCommandLineOption(LPWSTR lp1, LPWSTR lp2) noexcept {
 
 		case L'F':
 			if (chNext == L'0' || chNext == L'O') {
-				StrCpyExW(szIniFile, L"*?");
+				StrCpyEx(szIniFile, L"*?");
 				state = CommandParseState_Consumed;
 			}
 			break;
@@ -6274,7 +6262,7 @@ CommandParseState ParseCommandLineOption(LPWSTR lp1, LPWSTR lp2) noexcept {
 		if (StrCaseEqual(opt, L"ANSI")) {
 			flagSetEncoding = IDM_ENCODING_ANSI - IDM_ENCODING_ANSI + 1;
 			state = CommandParseState_Consumed;
-		} else if (StrHasPrefixCase(opt, L"appid=")) {
+		} else if (StrStartsWithCase(opt, L"appid=")) {
 			// Shell integration
 			opt += CSTRLEN(L"appid=");
 			lstrcpyn(g_wchAppUserModelID, opt, COUNTOF(g_wchAppUserModelID));
@@ -6357,7 +6345,7 @@ CommandParseState ParseCommandLineOption(LPWSTR lp1, LPWSTR lp2) noexcept {
 			break;
 		}
 
-		if (StrHasPrefixCase(opt, L"POS")) {
+		if (StrStartsWithCase(opt, L"POS")) {
 			opt += CSTRLEN(L"POS");
 		} else {
 			++opt;
@@ -6469,7 +6457,7 @@ CommandParseState ParseCommandLineOption(LPWSTR lp1, LPWSTR lp2) noexcept {
 
 	case L'S':
 		// Shell integration
-		if (StrHasPrefixCase(opt, L"sysmru=")) {
+		if (StrStartsWithCase(opt, L"sysmru=")) {
 			opt += CSTRLEN(L"sysmru=");
 			if (opt[1] == L'\0') {
 				const UINT value = opt[0] - L'0';
@@ -6482,7 +6470,7 @@ CommandParseState ParseCommandLineOption(LPWSTR lp1, LPWSTR lp2) noexcept {
 		break;
 
 	case L'U':
-		if (StrHasPrefixCase(opt, L"UTF")) {
+		if (StrStartsWithCase(opt, L"UTF")) {
 			opt += CSTRLEN(L"UTF");
 			if (*opt == '-') {
 				++opt;
@@ -6503,7 +6491,7 @@ CommandParseState ParseCommandLineOption(LPWSTR lp1, LPWSTR lp2) noexcept {
 				opt += 2;
 				state = ParseCommandLineEncoding(opt);
 			}
-		} else if (StrHasPrefixCase(opt, L"UNICODE")) {
+		} else if (StrStartsWithCase(opt, L"UNICODE")) {
 			opt += CSTRLEN(L"UNICODE");
 			state = ParseCommandLineEncoding(opt);
 		}
@@ -6531,8 +6519,8 @@ void ParseCommandLine() noexcept {
 	// Good old console can also send args separated by Tabs
 	StrTab2Space(lpCmdLine);
 
-	LPWSTR lp1 = (LPWSTR)NP2HeapAlloc(cmdSize);
-	LPWSTR lp3 = (LPWSTR)NP2HeapAlloc(cmdSize);
+	LPWSTR lp1 = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
+	LPWSTR lp3 = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
 
 	// Start with 2nd argument
 	if (!(ExtractFirstArgument(lpCmdLine, lp1, lp3) && *lp3)) {
@@ -6542,7 +6530,7 @@ void ParseCommandLine() noexcept {
 	}
 
 	bool bIsFileArg = false;
-	LPWSTR lp2 = (LPWSTR)NP2HeapAlloc(cmdSize);
+	LPWSTR lp2 = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
 	while (ExtractFirstArgument(lp3, lp1, lp2)) {
 		// options
 		if (!bIsFileArg) {
@@ -6576,13 +6564,13 @@ void ParseCommandLine() noexcept {
 
 		// pathname
 		{
-			LPWSTR lpFileBuf = (LPWSTR)NP2HeapAlloc(cmdSize);
+			LPWSTR lpFileBuf = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
 
 			if (lpFileArg) {
 				NP2HeapFree(lpFileArg);
 			}
 
-			lpFileArg = (LPWSTR)NP2HeapAlloc(sizeof(WCHAR) * (MAX_PATH + 2)); // changed for ActivatePrevInst() needs
+			lpFileArg = static_cast<LPWSTR>(NP2HeapAlloc(sizeof(WCHAR) * (MAX_PATH + 2))); // changed for ActivatePrevInst() needs
 			if (flagMultiFileArg == TripleBoolean_True) {
 				// multiple file arguments with quoted spaces
 				lstrcpyn(lpFileArg, lp1, MAX_PATH);
@@ -6625,68 +6613,67 @@ void ParseCommandLine() noexcept {
 // LoadFlags()
 //
 //
-void LoadFlags(void) {
-	IniSection section;
-	WCHAR *pIniSectionBuf = (WCHAR *)NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_FLAGS);
-	const int cchIniSection = (int)(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
-	IniSection * const pIniSection = &section;
-	IniSectionInit(pIniSection, 64);
+void LoadFlags() noexcept {
+	IniSectionParser section;
+	WCHAR *pIniSectionBuf = static_cast<WCHAR *>(NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_FLAGS));
+	const DWORD cchIniSection = static_cast<DWORD>(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
+	section.Init(64);
 
 	LoadIniSection(INI_SECTION_NAME_FLAGS, pIniSectionBuf, cchIniSection);
-	IniSectionParse(pIniSection, pIniSectionBuf);
+	section.Parse(pIniSectionBuf);
 
 #if NP2_ENABLE_APP_LOCALIZATION_DLL
-	uiLanguage = (LANGID)IniSectionGetInt(pIniSection, L"UILanguage", LANG_USER_DEFAULT);
+	uiLanguage = static_cast<LANGID>(section.GetInt(L"UILanguage", LANG_USER_DEFAULT));
 	ValidateUILangauge();
 #endif
 
-	bSingleFileInstance = IniSectionGetBool(pIniSection, L"SingleFileInstance", true);
-	bReuseWindow = IniSectionGetBool(pIniSection, L"ReuseWindow", false);
-	bStickyWindowPosition = IniSectionGetBool(pIniSection, L"StickyWindowPosition", false);
+	bSingleFileInstance = section.GetBool(L"SingleFileInstance", true);
+	bReuseWindow = section.GetBool(L"ReuseWindow", false);
+	bStickyWindowPosition = section.GetBool(L"StickyWindowPosition", false);
 
 	if (!flagReuseWindow && !flagNoReuseWindow) {
 		flagNoReuseWindow = !bReuseWindow;
 		flagSingleFileInstance = bSingleFileInstance;
 	}
-	if (IniSectionGetBool(pIniSection, L"ReadOnlyMode", false)) {
+	if (section.GetBool(L"ReadOnlyMode", false)) {
 		flagReadOnlyMode |= ReadOnlyMode_AllFile;
 	}
 	if (flagMultiFileArg == TripleBoolean_NotSet) {
-		if (IniSectionGetBool(pIniSection, L"MultiFileArg", false)) {
+		if (section.GetBool(L"MultiFileArg", false)) {
 			flagMultiFileArg = TripleBoolean_True;
 		}
 	}
 
-	flagRelativeFileMRU = IniSectionGetBool(pIniSection, L"RelativeFileMRU", true);
-	flagPortableMyDocs = IniSectionGetBool(pIniSection, L"PortableMyDocs", flagRelativeFileMRU);
+	flagRelativeFileMRU = section.GetBool(L"RelativeFileMRU", true);
+	flagPortableMyDocs = section.GetBool(L"PortableMyDocs", flagRelativeFileMRU);
 
-	IniSectionGetString(pIniSection, L"DefaultDirectory", L"", tchDefaultDir, COUNTOF(tchDefaultDir));
+	section.GetString(L"DefaultDirectory", L"", tchDefaultDir);
 
-	dwFileCheckInterval = IniSectionGetInt(pIniSection, L"FileCheckInterval", 1000);
-	dwAutoReloadTimeout = IniSectionGetInt(pIniSection, L"AutoReloadTimeout", 1000);
+	dwFileCheckInterval = section.GetInt(L"FileCheckInterval", 1000);
+	dwAutoReloadTimeout = section.GetInt(L"AutoReloadTimeout", 1000);
 
 	if (IsVistaAndAbove()) {
-		bUseXPFileDialog = IniSectionGetBool(pIniSection, L"UseXPFileDialog", false);
+		bUseXPFileDialog = section.GetBool(L"UseXPFileDialog", false);
 	} else {
 		bUseXPFileDialog = true;
 	}
 
-	flagNoFadeHidden = IniSectionGetBool(pIniSection, L"NoFadeHidden", false);
+	flagNoFadeHidden = section.GetBool(L"NoFadeHidden", false);
 
-	int iValue = IniSectionGetInt(pIniSection, L"OpacityLevel", 75);
+	int iValue = section.GetInt(L"OpacityLevel", 75);
 	iOpacityLevel = validate(iValue, 0, 100, 75);
 
-	iValue = IniSectionGetInt(pIniSection, L"FindReplaceOpacityLevel", 75);
+	iValue = section.GetInt(L"FindReplaceOpacityLevel", 75);
 	iFindReplaceOpacityLevel = validate(iValue, 0, 100, 75);
 
-	flagSimpleIndentGuides = IniSectionGetBool(pIniSection, L"SimpleIndentGuides", false);
-	fNoHTMLGuess = IniSectionGetBool(pIniSection, L"NoHTMLGuess", false);
-	fNoCGIGuess = IniSectionGetBool(pIniSection, L"NoCGIGuess", false);
-	fNoAutoDetection = IniSectionGetBool(pIniSection, L"NoAutoDetection", false);
-	fNoFileVariables = IniSectionGetBool(pIniSection, L"NoFileVariables", false);
+	flagSimpleIndentGuides = section.GetBool(L"SimpleIndentGuides", false);
+	fNoHTMLGuess = section.GetBool(L"NoHTMLGuess", false);
+	fNoCGIGuess = section.GetBool(L"NoCGIGuess", false);
+	fNoAutoDetection = section.GetBool(L"NoAutoDetection", false);
+	fNoFileVariables = section.GetBool(L"NoFileVariables", false);
 
 	if (StrIsEmpty(g_wchAppUserModelID)) {
-		LPCWSTR strValue = IniSectionGetValue(pIniSection, L"ShellAppUserModelID");
+		LPCWSTR strValue = section.GetValue(L"ShellAppUserModelID");
 		if (StrNotEmpty(strValue)) {
 			lstrcpyn(g_wchAppUserModelID, strValue, COUNTOF(g_wchAppUserModelID));
 		} else {
@@ -6695,12 +6682,12 @@ void LoadFlags(void) {
 	}
 
 	if (flagUseSystemMRU == TripleBoolean_NotSet) {
-		if (IniSectionGetBool(pIniSection, L"ShellUseSystemMRU", true)) {
+		if (section.GetBool(L"ShellUseSystemMRU", true)) {
 			flagUseSystemMRU = TripleBoolean_True;
 		}
 	}
 
-	IniSectionFree(pIniSection);
+	section.Free();
 	NP2HeapFree(pIniSectionBuf);
 }
 
@@ -6795,7 +6782,7 @@ bool CheckIniFileRedirect(LPWSTR lpszFile, LPCWSTR lpszModule, LPCWSTR redirectK
 }
 
 bool FindIniFile() noexcept {
-	if (StrEqualExW(szIniFile, L"*?")) {
+	if (StrEqualEx(szIniFile, L"*?")) {
 		return false;
 	}
 
@@ -6840,9 +6827,9 @@ bool FindIniFile() noexcept {
 }
 
 bool TestIniFile() noexcept {
-	if (StrEqualExW(szIniFile, L"*?")) {
-		StrCpyExW(szIniFile2, L"");
-		StrCpyExW(szIniFile, L"");
+	if (StrEqualEx(szIniFile, L"*?")) {
+		StrCpyEx(szIniFile2, L"");
+		StrCpyEx(szIniFile, L"");
 		return false;
 	}
 
@@ -6870,7 +6857,7 @@ bool TestIniFile() noexcept {
 
 	if ((dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
 		lstrcpy(szIniFile2, szIniFile);
-		StrCpyExW(szIniFile, L"");
+		StrCpyEx(szIniFile, L"");
 		return false;
 	}
 
@@ -7062,8 +7049,8 @@ void UpdateStatusbar() noexcept {
 
 	// find all and mark occurrences
 	WCHAR tchMatchesCount[32];
-	FormatNumber(tchMatchesCount, editMarkAllStatus.matchCount);
-	if (editMarkAllStatus.pending) {
+	FormatNumber(tchMatchesCount, editMarkAll.matchCount);
+	if (editMarkAll.pending) {
 		lstrcat(tchMatchesCount, L" ...");
 	}
 
@@ -7079,7 +7066,7 @@ void UpdateStatusbar() noexcept {
 		tchSelChar, tchSelByte, tchLinesSelected, tchMatchesCount);
 
 	LPCWSTR items[StatusItem_ItemCount];
-	memset(NP2_void_pointer(&items[0]), 0, StatusItem_Lexer * sizeof(LPCWSTR));
+	memset(AsVoidPointer(items), 0, StatusItem_Lexer * sizeof(LPCWSTR));
 	LPWSTR start = itemText;
 	UINT index = 0;
 	for (int i = 0; i < len; i++) {
@@ -7095,7 +7082,7 @@ void UpdateStatusbar() noexcept {
 	}
 
 	items[index] = start;
-	memcpy(NP2_void_pointer(&items[StatusItem_Lexer]), NP2_void_pointer(&cachedStatusItem.pszLexerName), (StatusItem_Zoom - StatusItem_Lexer)*sizeof(LPCWSTR));
+	memcpy(AsVoidPointer(&items[StatusItem_Lexer]), AsVoidPointer(&cachedStatusItem.pszLexerName), (StatusItem_Zoom - StatusItem_Lexer)*sizeof(LPCWSTR));
 	items[StatusItem_Zoom] = cachedStatusItem.tchZoom;
 	items[StatusItem_DocSize] = tchDocSize;
 
@@ -7104,8 +7091,8 @@ void UpdateStatusbar() noexcept {
 	HWND hwnd = hwndStatus;
 	// inline StatusCalcPaneWidth() function
 	HDC hdc = GetDC(hwnd);
-	HFONT hfont = (HFONT)SendMessage(hwnd, WM_GETFONT, 0, 0);
-	HFONT hfold = (HFONT)SelectObject(hdc, hfont);
+	HFONT hfont = GetWindowFont(hwnd);
+	HFONT hfold = SelectFont(hdc, hfont);
 	const int mmode = SetMapMode(hdc, MM_TEXT);
 	int totalWidth = 0;
 	for (int i = 0; i < StatusItem_ItemCount; i++) {
@@ -7144,7 +7131,7 @@ void UpdateStatusbar() noexcept {
 	if (updateMask == 0) {
 		SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
 	}
-	SendMessage(hwnd, SB_SETPARTS, COUNTOF(aWidth), (LPARAM)aWidth);
+	SendMessage(hwnd, SB_SETPARTS, COUNTOF(aWidth), AsInteger<LPARAM>(aWidth));
 	for (int i = 0; i < StatusItem_ItemCount; i++) {
 		LPCWSTR lpsz = items[i];
 		if (lpsz) {
@@ -7239,7 +7226,7 @@ void ToggleFullScreenMode() noexcept {
 //	FileIO()
 //
 //
-bool FileIO(bool fLoad, LPWSTR pszFile, int flag, EditFileIOStatus &status) {
+bool FileIO(bool fLoad, LPWSTR pszFile, int flag, EditFileIOStatus &status) noexcept {
 	BeginWaitCursor();
 
 	WCHAR tch[MAX_PATH + 128];
@@ -7312,13 +7299,13 @@ bool FileLoad(FileLoadFlag loadFlag, LPCWSTR lpszFile) {
 	}
 
 	if (loadFlag & FileLoadFlag_New) {
-		StrCpyExW(szCurFile, L"");
+		StrCpyEx(szCurFile, L"");
 		SetDlgItemText(hwndMain, IDC_FILENAME, szCurFile);
 		SetDlgItemInt(hwndMain, IDC_REUSELOCK, GetTickCount(), FALSE);
 		if (!keepTitleExcerpt) {
-			StrCpyExW(szTitleExcerpt, L"");
+			StrCpyEx(szTitleExcerpt, L"");
 		}
-		FileVars_Init(NULL, 0, &fvCurFile);
+		fvCurFile.Init(nullptr, 0);
 		EditSetEmptyText();
 		bDocumentModified = false;
 		bReadOnlyFile = false;
@@ -7380,7 +7367,7 @@ bool FileLoad(FileLoadFlag loadFlag, LPCWSTR lpszFile) {
 			if (hFile != INVALID_HANDLE_VALUE) {
 				fSuccess = true;
 				CloseHandle(hFile);
-				FileVars_Init(NULL, 0, &fvCurFile);
+				fvCurFile.Init(nullptr, 0);
 				EditSetEmptyText();
 				iCurrentEOLMode = GetScintillaEOLMode(iDefaultEOLMode);
 				SciCall_SetEOLMode(iCurrentEOLMode);
@@ -7413,7 +7400,7 @@ bool FileLoad(FileLoadFlag loadFlag, LPCWSTR lpszFile) {
 		SetDlgItemText(hwndMain, IDC_FILENAME, szCurFile);
 		SetDlgItemInt(hwndMain, IDC_REUSELOCK, GetTickCount(), FALSE);
 		if (!keepTitleExcerpt) {
-			StrCpyExW(szTitleExcerpt, L"");
+			StrCpyEx(szTitleExcerpt, L"");
 		}
 		iOriginalEncoding = iCurrentEncoding;
 		bDocumentModified = false;
@@ -7443,7 +7430,7 @@ bool FileLoad(FileLoadFlag loadFlag, LPCWSTR lpszFile) {
 			UpdateLineNumberWidth();
 		}
 
-		MRU_Add(&mruFile, szFileName);
+		mruFile.Add(szFileName);
 		if (flagUseSystemMRU == TripleBoolean_True) {
 			SHAddToRecentDocs(SHARD_PATHW, szFileName);
 		}
@@ -7460,7 +7447,7 @@ bool FileLoad(FileLoadFlag loadFlag, LPCWSTR lpszFile) {
 			if (fvCurFile.mask & FV_MaskHasFileTabSettings) {
 				fvCurFile.mask &= ~FV_MaskHasFileTabSettings;
 				Style_LoadTabSettings(pLexCurrent);
-				FileVars_Apply(&fvCurFile);
+				fvCurFile.Apply();
 			}
 		}
 		// open file in read only mode
@@ -7534,7 +7521,7 @@ bool FileLoad(FileLoadFlag loadFlag, LPCWSTR lpszFile) {
 // FileSave()
 //
 //
-bool FileSave(FileSaveFlag saveFlag) {
+bool FileSave(FileSaveFlag saveFlag) noexcept {
 	const bool Untitled = StrIsEmpty(szCurFile);
 	bool bIsEmptyNewFile = false;
 
@@ -7620,7 +7607,7 @@ bool FileSave(FileSaveFlag saveFlag) {
 					SetDlgItemText(hwndMain, IDC_FILENAME, szCurFile);
 					SetDlgItemInt(hwndMain, IDC_REUSELOCK, GetTickCount(), FALSE);
 					if (!fKeepTitleExcerpt) {
-						StrCpyExW(szTitleExcerpt, L"");
+						StrCpyEx(szTitleExcerpt, L"");
 					}
 					if (flagLexerSpecified) {
 						if (pLexCurrent->rid == iInitialLexer) {
@@ -7652,7 +7639,7 @@ bool FileSave(FileSaveFlag saveFlag) {
 		if (!(saveFlag & FileSaveFlag_SaveCopy)) {
 			bDocumentModified = false;
 			iOriginalEncoding = iCurrentEncoding;
-			MRU_Add(&mruFile, szCurFile);
+			mruFile.Add(szCurFile);
 			if (flagUseSystemMRU == TripleBoolean_True) {
 				SHAddToRecentDocs(SHARD_PATHW, szCurFile);
 			}
@@ -7862,7 +7849,7 @@ static BOOL CALLBACK EnumWindProcReuseWindow(HWND hwnd, LPARAM lParam) noexcept 
 		if (StrCaseEqual(szClassName, wchWndClass)) {
 			const DWORD dwReuseLock = GetDlgItemInt(hwnd, IDC_REUSELOCK, nullptr, FALSE);
 			if (GetTickCount() - dwReuseLock >= REUSEWINDOWLOCKTIMEOUT) {
-				*(HWND *)lParam = hwnd;
+				*AsPointer<HWND *>(lParam) = hwnd;
 				if (IsWindowEnabled(hwnd)) {
 					bContinue = FALSE;
 				}
@@ -7887,7 +7874,7 @@ static BOOL CALLBACK EnumWindProcSingleFileInstance(HWND hwnd, LPARAM lParam) no
 				WCHAR tchFileName[MAX_PATH] = L"";
 				GetDlgItemText(hwnd, IDC_FILENAME, tchFileName, COUNTOF(tchFileName));
 				if (PathEquivalent(tchFileName, lpFileArg)) {
-					*(HWND *)lParam = hwnd;
+					*AsPointer<HWND *>(lParam) = hwnd;
 				} else {
 					bContinue = TRUE;
 				}
@@ -7914,7 +7901,7 @@ bool ActivatePrevInst() noexcept {
 		GetLongPathName(lpFileArg, lpFileArg, MAX_PATH);
 
 		HWND hwnd = nullptr;
-		EnumWindows(EnumWindProcSingleFileInstance, (LPARAM)&hwnd);
+		EnumWindows(EnumWindProcSingleFileInstance, AsInteger<LPARAM>(&hwnd));
 
 		if (hwnd != nullptr) {
 			// Enabled
@@ -7965,7 +7952,7 @@ bool ActivatePrevInst() noexcept {
 				cds.cbData = (DWORD)GlobalSize(params);
 				cds.lpData = params;
 
-				SendMessage(hwnd, WM_COPYDATA, 0, (LPARAM)&cds);
+				SendMessage(hwnd, WM_COPYDATA, 0, AsInteger<LPARAM>(&cds));
 				GlobalFree(params);
 
 				return true;
@@ -7984,7 +7971,7 @@ bool ActivatePrevInst() noexcept {
 	}
 
 	HWND hwnd = nullptr;
-	EnumWindows(EnumWindProcReuseWindow, (LPARAM)&hwnd);
+	EnumWindows(EnumWindProcReuseWindow, AsInteger<LPARAM>(&hwnd));
 
 	// Found a window
 	if (hwnd != nullptr) {
@@ -8058,7 +8045,7 @@ bool ActivatePrevInst() noexcept {
 				cds.cbData = (DWORD)GlobalSize(params);
 				cds.lpData = params;
 
-				SendMessage(hwnd, WM_COPYDATA, 0, (LPARAM)&cds);
+				SendMessage(hwnd, WM_COPYDATA, 0, AsInteger<LPARAM>(&cds));
 				GlobalFree(params);
 				NP2HeapFree(lpFileArg);
 			}
@@ -8083,11 +8070,11 @@ bool RelaunchMultiInst() noexcept {
 	if (flagMultiFileArg == TripleBoolean_True && cFileList > 1) {
 		LPWSTR lpCmdLineNew = StrDup(GetCommandLine());
 		const size_t cmdSize = sizeof(WCHAR) * (lstrlen(lpCmdLineNew) + 1);
-		LPWSTR lp1 = (LPWSTR)NP2HeapAlloc(cmdSize);
-		LPWSTR lp2 = (LPWSTR)NP2HeapAlloc(cmdSize);
+		LPWSTR lp1 = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
+		LPWSTR lp2 = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
 
 		StrTab2Space(lpCmdLineNew);
-		StrCpyExW(lpCmdLineNew + cchiFileList, L"");
+		StrCpyEx(lpCmdLineNew + cchiFileList, L"");
 
 		LPWSTR pwch = StrEnd(lpCmdLineNew) - 1;
 		int i = 0;
@@ -8268,7 +8255,7 @@ void GetRelaunchParameters(LPWSTR szParameters, LPCWSTR lpszFile, bool newWind, 
 // RelaunchElevated()
 //
 //
-bool RelaunchElevated(void) {
+bool RelaunchElevated() noexcept {
 	if (!IsVistaAndAbove() || fIsElevated || flagRelaunchElevated == RelaunchElevatedFlag_None || flagDisplayHelp) {
 		return false;
 	}
@@ -8285,16 +8272,16 @@ bool RelaunchElevated(void) {
 			}
 
 			exit = PathEqual(tchFile, szCurFile);
-			lpArg1 = (LPWSTR)NP2HeapAlloc(sizeof(WCHAR) * MAX_PATH);
+			lpArg1 = static_cast<LPWSTR>(NP2HeapAlloc(sizeof(WCHAR) * MAX_PATH));
 			GetModuleFileName(nullptr, lpArg1, MAX_PATH);
-			lpArg2 = (LPWSTR)NP2HeapAlloc(sizeof(WCHAR) * 1024);
+			lpArg2 = static_cast<LPWSTR>(NP2HeapAlloc(sizeof(WCHAR) * 1024));
 			GetRelaunchParameters(lpArg2, tchFile, !exit, false);
 			exit = !IsDocumentModified();
 		} else {
 			const LPCWSTR lpCmdLine = GetCommandLine();
 			const size_t cmdSize = sizeof(WCHAR) * (lstrlen(lpCmdLine) + 1);
-			lpArg1 = (LPWSTR)NP2HeapAlloc(cmdSize);
-			lpArg2 = (LPWSTR)NP2HeapAlloc(cmdSize);
+			lpArg1 = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
+			lpArg2 = static_cast<LPWSTR>(NP2HeapAlloc(cmdSize));
 			ExtractFirstArgument(lpCmdLine, lpArg1, lpArg2);
 		}
 
@@ -8425,7 +8412,7 @@ void SetNotifyIconTitle(HWND hwnd) noexcept {
 	}
 
 	if (IsDocumentModified()) {
-		StrCpyExW(nid.szTip, L"* ");
+		StrCpyEx(nid.szTip, L"* ");
 	}
 	StrCatBuff(nid.szTip, tchTitle, COUNTOF(nid.szTip));
 	Shell_NotifyIcon(NIM_MODIFY, &nid);
@@ -8443,7 +8430,7 @@ void ShowNotificationW(int notifyPos, LPCWSTR lpszText) noexcept {
 	const int cpEdit = SciCall_GetCodePage();
 	const int wchLen = lstrlen(lpszText);
 	const int cchLen = wchLen*kMaxMultiByteCount + 1;
-	char *cchText = (char *)NP2HeapAlloc(cchLen);
+	char *cchText = static_cast<char *>(NP2HeapAlloc(cchLen));
 	WideCharToMultiByte(cpEdit, 0, lpszText, -1, cchText, cchLen, nullptr, nullptr);
 	ShowNotificationA(notifyPos, cchText);
 	NP2HeapFree(cchText);
@@ -8507,7 +8494,7 @@ void InstallFileWatching(bool terminate) noexcept {
 	}
 }
 
-static inline bool IsCurrentFileChangedOutsideApp(void) noexcept {
+static inline bool IsCurrentFileChangedOutsideApp() noexcept {
 	// Check if the file has been changed
 	WIN32_FIND_DATA fdUpdated;
 	if (!GetFileAttributesEx(szCurFile, GetFileExInfoStandard, &fdUpdated)) {
@@ -8612,7 +8599,7 @@ void CALLBACK PasteBoardTimer(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTi
 	}
 }
 
-void AutoSave_Start(bool reset) {
+void AutoSave_Start(bool reset) noexcept {
 	if ((iAutoSaveOption & AutoSaveOption_Periodic) && dwAutoSavePeriod != 0) {
 		if (reset || !bAutoSaveTimerSet) {
 			bAutoSaveTimerSet = true;
@@ -8626,7 +8613,7 @@ void AutoSave_Start(bool reset) {
 	}
 }
 
-void AutoSave_Stop(BOOL keepBackup) {
+void AutoSave_Stop(BOOL keepBackup) noexcept {
 	dwCurrentDocReversion = 0;
 	dwLastSavedDocReversion = 0;
 	if (bAutoSaveTimerSet) {
@@ -8646,16 +8633,16 @@ void AutoSave_Stop(BOOL keepBackup) {
 		}
 
 		autoSaveCount = 0;
-		memset(NP2_void_pointer(autoSavePathList), 0, sizeof(LPWSTR) * AllAutoSaveCount);
+		memset(AsVoidPointer(autoSavePathList), 0, sizeof(LPWSTR) * AllAutoSaveCount);
 	}
 }
 
-LPCWSTR AutoSave_GetDefaultFolder(void) {
+LPCWSTR AutoSave_GetDefaultFolder() noexcept {
 	LPWSTR szFolder = szAutoSaveFolder;
 	if (StrIsEmpty(szFolder)) {
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 		LPWSTR pszPath = nullptr;
-		const HRESULT hr = SHGetKnownFolderPath(KnownFolderId_LocalAppData, KF_FLAG_DEFAULT, nullptr, &pszPath);
+		const HRESULT hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DEFAULT, nullptr, &pszPath);
 		if (hr == S_OK) {
 			PathCombine(szFolder, pszPath, WC_NOTEPAD4);
 			CoTaskMemFree(pszPath);
@@ -8683,7 +8670,7 @@ LPCWSTR AutoSave_GetDefaultFolder(void) {
 	return szFolder;
 }
 
-void AutoSave_DoWork(FileSaveFlag saveFlag) {
+void AutoSave_DoWork(FileSaveFlag saveFlag) noexcept {
 	if (!(saveFlag & FileSaveFlag_SaveAlways) && (!IsDocumentModified() || dwCurrentDocReversion == dwLastSavedDocReversion)) {
 		return;
 	}
@@ -8756,7 +8743,7 @@ void AutoSave_DoWork(FileSaveFlag saveFlag) {
 	}
 
 	DWORD length = cbData + COUNTOF(suffix)*kMaxMultiByteCount + 1;
-	char *lpData = (char *)NP2HeapAlloc(length);
+	char *lpData = static_cast<char *>(NP2HeapAlloc(length));
 	if (metaLen) {
 		lstrcpy(suffix, L"AutoSave for ");
 		lstrcat(suffix, szCurFile);
@@ -8799,7 +8786,7 @@ void AutoSave_DoWork(FileSaveFlag saveFlag) {
 				}
 				LocalFree(old);
 			}
-			memmove(NP2_void_pointer(autoSavePathList), NP2_void_pointer(autoSavePathList + 1), (AllAutoSaveCount - 1) * sizeof(LPWSTR));
+			memmove(AsVoidPointer(autoSavePathList), AsVoidPointer(autoSavePathList + 1), (AllAutoSaveCount - 1) * sizeof(LPWSTR));
 			autoSavePathList[AllAutoSaveCount - 1] = nullptr;
 			--autoSaveCount;
 		}
