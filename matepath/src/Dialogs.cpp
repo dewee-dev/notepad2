@@ -560,7 +560,7 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam
 		switch (pnmhdr->code) {
 		case NM_CLICK:
 		case NM_RETURN:
-			OpenHelpLink(hwnd, (int)(pnmhdr->idFrom));
+			OpenHelpLink(hwnd, static_cast<int>(pnmhdr->idFrom));
 			break;
 		}
 	}
@@ -957,7 +957,7 @@ INT_PTR CALLBACK ItemsPageProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lPara
 			colorFilter = m_colorFilter;
 
 #if NP2_ENABLE_APP_LOCALIZATION_DLL
-			SetUILanguage((int)SendDlgItemMessage(hwnd, IDC_LANGUAGE_LIST, CB_GETCURSEL, 0, 0) + IDS_LANG_USER_DEFAULT);
+			SetUILanguage(static_cast<int>(SendDlgItemMessage(hwnd, IDC_LANGUAGE_LIST, CB_GETCURSEL, 0, 0)) + IDS_LANG_USER_DEFAULT);
 #endif
 			bUseXPFileDialog = IsButtonChecked(hwnd, IDC_USE_XP_FILE_DIALOG);
 			SetWindowLongPtr(hwnd, DWLP_MSGRESULT, PSNRET_NOERROR);
@@ -1894,7 +1894,7 @@ INT_PTR CALLBACK OpenWithDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lPa
 		InitWindowCommon(hwndLV);
 		//SetExplorerTheme(hwndLV);
 		ListView_SetExtendedListViewStyle(hwndLV, /*LVS_EX_FULLROWSELECT | */LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
-		LVCOLUMN lvc = { LVCF_FMT | LVCF_TEXT, LVCFMT_LEFT, 0, nullptr, -1, 0, 0, 0
+		const LVCOLUMN lvc = { LVCF_FMT | LVCF_TEXT, LVCFMT_LEFT, 0, nullptr, -1, 0, 0, 0
 #if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 			, 0, 0, 0
 #endif
@@ -2340,7 +2340,7 @@ INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 		ti.hwnd     = hwnd;
 		ti.uId      = AsInteger<UINT_PTR>(GetDlgItem(hwnd, IDC_BROWSE));
 		ti.hinst    = g_hInstance;
-		ti.lpszText = (LPWSTR)IDS_SEARCHEXE;
+		ti.lpszText = MAKEINTRESOURCE(IDS_SEARCHEXE);
 
 		if (!SendMessage(hwndToolTip, TTM_ADDTOOL, 0, AsInteger<LPARAM>(&ti))) {
 			DestroyWindow(hwndToolTip);
@@ -2354,9 +2354,9 @@ INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 		//ti.hwnd     = hwnd;
 		//ti.uId      = AsInteger<UINT_PTR>(GetDlgItem(hwnd, IDC_FINDWIN));
 		//ti.hinst    = g_hInstance;
-		//ti.lpszText = (LPWSTR)IDS_FINDWINTITLE;
+		//ti.lpszText = MAKEINTRESOURCE(IDS_FINDWINTITLE);
 		//
-		//if (!SendMessage(hwndToolTip, TTM_ADDTOOL, 0, (LPARAM)&ti)) {
+		//if (!SendMessage(hwndToolTip, TTM_ADDTOOL, 0, AsInteger<LPARAM>(&ti))) {
 		//	DestroyWindow(hwndToolTip);
 		//}
 
@@ -2378,7 +2378,7 @@ INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 		}
 		if (iUseTargetApplication != UseTargetApplication_None) {
 			CheckRadioButton(hwnd, IDC_LAUNCH, IDC_TARGET, IDC_TARGET);
-			CheckRadioButton(hwnd, IDC_ALWAYSRUN, IDC_USEDDE, IDC_ALWAYSRUN + (int)iTargetApplicationMode);
+			CheckRadioButton(hwnd, IDC_ALWAYSRUN, IDC_USEDDE, IDC_ALWAYSRUN + static_cast<int>(iTargetApplicationMode));
 		} else {
 			CheckRadioButton(hwnd, IDC_LAUNCH, IDC_TARGET, IDC_LAUNCH);
 		}
@@ -2573,7 +2573,7 @@ INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 				}
 
 				section.SetBool(L"UseTargetApplication", !ignoreTarget);
-				section.SetInt(L"TargetApplicationMode", (int)iTargetApplicationMode);
+				section.SetInt(L"TargetApplicationMode", static_cast<int>(iTargetApplicationMode));
 				section.SetString(L"TargetApplicationPath", szTargetApplication);
 				section.SetString(L"TargetApplicationParams", szTargetApplicationParams);
 

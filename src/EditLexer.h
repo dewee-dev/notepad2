@@ -55,7 +55,7 @@ enum {
 #define LexerAttr_GetTabAsSpaces(attr)			((attr) & LexerAttr_TabAsSpaces)
 #define LexerAttr_GetGlobalTabSettings(attr)	(!((attr) & LexerAttr_NoGlobalTabSettings))
 #define KeywordAttr32(index, value)		((value) << ((index)*4))
-#define KeywordAttr64(index, value)		((uint64_t)(value) << ((index)*4))
+#define KeywordAttr64(index, value)		(static_cast<uint64_t>(value) << ((index)*4))
 
 struct EDITSTYLE {
 	const unsigned iStyle;
@@ -70,7 +70,7 @@ struct EDITSTYLE {
 #define EDITSTYLE_BufferSize(iStyleCount)	((iStyleCount) * MAX_EDITSTYLE_VALUE_SIZE * sizeof(wchar_t))
 #define	MULTI_STYLE(a, b, c, d)			((a) | ((b) << 8) | ((c) << 16) | ((d) << 24))
 #define	MULTI_STYLE8(a, b, c, d, e, f, g, h) \
-	(MULTI_STYLE(a, b, c, d) | ((uint64_t)MULTI_STYLE(e, f, g, h) << 32))
+	(MULTI_STYLE(a, b, c, d) | (static_cast<uint64_t>(MULTI_STYLE(e, f, g, h)) << 32))
 
 struct KEYWORDLIST {
 	const char * const pszKeyWords[KEYWORDSET_MAX + 1];
@@ -170,6 +170,7 @@ using LPCEDITLEXER = const EDITLEXER *;
 #define NP2LEX_INI			63048	// SCLEX_PROPERTIES	Ini Config File
 #define NP2LEX_CONFIG		63049	// SCLEX_CONFIG		Config File
 #define NP2LEX_DIFF			63050	// SCLEX_DIFF		Diff/Patch
+
 #define NP2LEX_AWK			63051	// SCLEX_AWK		Awk Script
 #define NP2LEX_JAMFILE		63052	// SCLEX_JAMFILE	Jamfile
 #define NP2LEX_GRAPHVIZ		63053	// SCLEX_GRAPHVIZ	GraphViz Dot
@@ -184,7 +185,7 @@ using LPCEDITLEXER = const EDITLEXER *;
 #define NP2LEX_SCILAB		63062	// SCLEX_MATLAB		Scilab Code
 #define NP2LEX_RLANG		63063	// SCLEX_RLANG		R Code
 #define NP2LEX_MATHEMATICA	63064	// SCLEX_MATHEMATICA	Mathematica
-
+#define NP2LEX_SAS			63065	// SCLEX_SAS		SAS File
 #define NP2LEX_JULIA		63066	// SCLEX_JULIA		Julia Script
 #define NP2LEX_RUST			63067	// SCLEX_RUST		Rust Source
 #define NP2LEX_KOTLIN		63068	// SCLEX_KOTLIN		Kotlin Source
@@ -217,8 +218,8 @@ using LPCEDITLEXER = const EDITLEXER *;
 #define NP2LEX_AUTOHOTKEY	63095	// SCLEX_AUTOHOTKEY	AutoHotkey Script
 
 // special lexers
-#define NP2LEX_ANSI			63096	// SCLEX_NULL		ANSI Art
-#define NP2LEX_2NDTEXTFILE	63097	// SCLEX_NULL		2nd Text File
-//#define NP2LEX_DARKUITHEME	63098	// SCLEX_NULL		Dark Mode UI Theme
-#define NP2LEX_2NDGLOBAL	63099	// SCLEX_NULL		2nd Global Styles
-#define NP2LEX_GLOBAL		63100	// SCLEX_NULL		Global Styles
+#define NP2LEX_ANSI			63196	// SCLEX_NULL		ANSI Art
+#define NP2LEX_2NDTEXTFILE	63197	// SCLEX_NULL		2nd Text File
+//#define NP2LEX_DARKUITHEME	63198	// SCLEX_NULL		Dark Mode UI Theme
+#define NP2LEX_2NDGLOBAL	63199	// SCLEX_NULL		2nd Global Styles
+#define NP2LEX_GLOBAL		63200	// SCLEX_NULL		Global Styles

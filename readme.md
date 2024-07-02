@@ -12,7 +12,7 @@ Latest development builds (artifacts in Release configuration for each compiler 
 | [![Build status](https://github.com/zufuliu/notepad4/workflows/CI/badge.svg)](https://github.com/zufuliu/notepad4/actions) | [![Build status](https://ci.appveyor.com/api/projects/status/github/zufuliu/notepad4?branch=main&svg=true)](https://ci.appveyor.com/project/zufuliu/notepad4) |
 
 ## [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots)
-![v4.23.01 HD](https://raw.githubusercontent.com/wiki/zufuliu/notepad4/screenshots/v4.23.01HD.png)
+![v24.07 HD](https://raw.githubusercontent.com/wiki/zufuliu/notepad4/screenshots/v24.07HD.png)
 
 ## Changes compared to [Notepad2](https://www.flos-freeware.ch/notepad2.html) or [Notepad2-mod](https://xhmikosr.github.io/notepad2-mod/):
 
@@ -119,6 +119,7 @@ Latest development builds (artifacts in Release configuration for each compiler 
 	* [REBOL](tools/lang/Rebol.r) 3 and [Red](tools/lang/Red.red)
 	* [Ruby](tools/lang/Ruby.rb), up to Ruby 3.2. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#ruby)
 	* [Rust](tools/lang/Rust.rs), up to Rust 1.38. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#rust)
+	* [SAS](tools/lang/SAS.sas), up to SAS Viya 2024.06.
 	* [Scala](tools/lang/Scala.scala), up to Scala 3.2.
 	* Shell Script
 		* [Bash](tools/lang/Bash.sh) likes (sh, bash, dash, ash, zsh, ksh), up to Bash 5.2. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#shell-script)

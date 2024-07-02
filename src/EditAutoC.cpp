@@ -150,7 +150,7 @@ struct WordNode {
 // store word right after the node as most word are short.
 #define WordNode_GetWord(node)		(reinterpret_cast<char *>(node) + sizeof(WordNode))
 // TODO: since the tree is sorted, nodes greater than some level can be deleted to reduce total words.
-// or only limit word count in WordList_GetList().
+// or only limit word count in WordList::GetList().
 
 // Andersson Tree, source from https://www.eternallyconfuzzled.com/tuts/datastructures/jsw_tut_andersson.aspx
 // see also https://en.wikipedia.org/wiki/AA_tree
@@ -401,7 +401,7 @@ void WordList::AddListEx(LPCSTR pList) noexcept {
 			ch = *sub++;
 		} while (!WordList_IsSeparator(ch));
 
-		UINT lenSub = (UINT)(sub - pList - 1);
+		UINT lenSub = static_cast<UINT>(sub - pList - 1);
 		lenSub = min<UINT>(NP2_AUTOC_MAX_WORD_LENGTH - len, lenSub);
 		memcpy(word + len, pList, lenSub);
 		len += lenSub;
@@ -505,6 +505,7 @@ static constexpr bool IsSpecialStartChar(int ch, int chPrev) noexcept {
 		|| (ch == '$') // variable
 		|| (ch == '`') // VHDL, Verilog directive
 		|| (ch == '\'')// VHDL attribute
+		|| (ch == '%') // SAS macro
 		|| (chPrev == '\\' && (ch == '^' || ch == ':'))// LaTeX input, Emoji input
 		// TODO: show emoji list after typing ':'.
 		|| (chPrev == '<' && ch == '/')	// HTML/XML Close Tag
@@ -701,6 +702,7 @@ enum {
 	PythonKeywordIndex_Decorator = 7,
 	RebolKeywordIndex_Directive = 1,
 	RubyKeywordIndex_PredefinedVariable = 4,
+	SASKeywordIndex_Macro = 1,
 	ScalaKeywordIndex_Annotation = 3,
 	ScalaKeywordIndex_Scaladoc = 5,
 	SmaliKeywordIndex_Directive = 9,
@@ -799,7 +801,7 @@ static void AutoC_AddDocWord(WordList &pWList, const uint32_t (&ignoredStyleMask
 	// optimization for small string
 	char onStack[64];
 	char *pFind;
-	if (iRootLen + 2 <= (int)sizeof(onStack)) {
+	if (iRootLen + 2 <= static_cast<int>(sizeof(onStack))) {
 		memset(onStack, 0, sizeof(onStack));
 		pFind = onStack;
 	} else {
@@ -809,7 +811,7 @@ static void AutoC_AddDocWord(WordList &pWList, const uint32_t (&ignoredStyleMask
 	pFind[0] = prefix;
 	memcpy(pFind + (prefix != '\0'), pRoot, iRootLen);
 	int findFlag = (bIgnoreCase ? SCFIND_NONE : SCFIND_MATCHCASE) | SCFIND_MATCH_TO_WORD_END;
-	if (IsDefaultWordChar((uint8_t)pRoot[0])) {
+	if (IsDefaultWordChar(static_cast<uint8_t>(pRoot[0]))) {
 		findFlag |= SCFIND_WORDSTART;
 	}
 
@@ -876,14 +878,14 @@ static void AutoC_AddDocWord(WordList &pWList, const uint32_t (&ignoredStyleMask
 				char *pWord = wordBuf + 16; // avoid overlap in memcpy()
 				bool bChanged = false;
 				const Sci_TextRangeFull tr = { { iPosFind, min(iPosFind + NP2_AUTOC_MAX_WORD_LENGTH, wordEnd) }, pWord };
-				int wordLength = (int)SciCall_GetTextRangeFull(&tr);
+				int wordLength = static_cast<int>(SciCall_GetTextRangeFull(&tr));
 
 				const Sci_Position before = SciCall_PositionBefore(iPosFind);
 				if (before + 1 == iPosFind) {
 					const int chPrev = SciCall_GetCharAt(before);
 					// word after escape character or format specifier
 					if (chPrev == '%' || chPrev == pLexCurrent->escapeCharacterStart) {
-						if (IsEscapeCharOrFormatSpecifier(before, (uint8_t)pWord[0], chPrev, style, false)) {
+						if (IsEscapeCharOrFormatSpecifier(before, static_cast<uint8_t>(pWord[0]), chPrev, style, false)) {
 							pWord++;
 							--wordLength;
 							bChanged = true;
@@ -1375,6 +1377,13 @@ static AddWordResult AutoC_AddSpecWord(WordList &pWList, int iCurrentStyle, int 
 		}
 		break;
 
+	case NP2LEX_SAS:
+		if (ch == '%') {
+			pWList.AddList(pLex->pKeyWords->pszKeyWords[SASKeywordIndex_Macro]);
+			return AddWordResult_IgnoreLexer;
+		}
+		break;
+
 	case NP2LEX_SCALA:
 		if (ch == '@') {
 			if (iCurrentStyle == SCE_SCALA_DEFAULT) {
@@ -1452,14 +1461,14 @@ void EditCompleteUpdateConfig() noexcept {
 	const BOOL punctuation = mask & AutoCompleteFillUpMask_Punctuation;
 	int k = 0;
 	for (UINT j = 0; j < COUNTOF(autoCompletionConfig.wszAutoCompleteFillUp); j++) {
-		const WCHAR c = autoCompletionConfig.wszAutoCompleteFillUp[j];
-		if (c == L'\0') {
+		const WCHAR ch = autoCompletionConfig.wszAutoCompleteFillUp[j];
+		if (ch == L'\0') {
 			break;
 		}
-		if (IsPunctuation(c)) {
-			autoCompletionConfig.wszAutoCompleteFillUp[k++] = c;
+		if (IsPunctuation(ch)) {
+			autoCompletionConfig.wszAutoCompleteFillUp[k++] = ch;
 			if (punctuation) {
-				autoCompletionConfig.szAutoCompleteFillUp[i++] = (char)c;
+				autoCompletionConfig.szAutoCompleteFillUp[i++] = static_cast<char>(ch);
 			}
 		}
 	}
@@ -1582,7 +1591,7 @@ static bool EditCompleteWordCore(int iCondition, bool autoInsert) noexcept {
 	// optimization for small string
 	char onStack[64];
 	char *pRoot;
-	if (iCurrentPos - iStartWordPos + 1 < (Sci_Position)sizeof(onStack)) {
+	if (iCurrentPos - iStartWordPos + 1 < static_cast<Sci_Position>(sizeof(onStack))) {
 		memset(onStack, 0, sizeof(onStack));
 		pRoot = onStack;
 	} else {
@@ -1591,7 +1600,7 @@ static bool EditCompleteWordCore(int iCondition, bool autoInsert) noexcept {
 
 	const Sci_TextRangeFull tr = { { iStartWordPos, iCurrentPos }, pRoot };
 	SciCall_GetTextRangeFull(&tr);
-	iRootLen = (int)strlen(pRoot);
+	iRootLen = static_cast<int>(strlen(pRoot));
 
 #if 0
 	StopWatch watch;
@@ -1623,7 +1632,7 @@ static bool EditCompleteWordCore(int iCondition, bool autoInsert) noexcept {
 			if (ch == '/' || ch == '>') {
 				ch = '<';
 			}
-			prefix = (char)ch;
+			prefix = static_cast<char>(ch);
 		}
 	}
 
@@ -1690,7 +1699,7 @@ static bool EditCompleteWordCore(int iCondition, bool autoInsert) noexcept {
 					pSubRoot++;
 				}
 				if (*pSubRoot) {
-					iRootLen = (int)strlen(pSubRoot);
+					iRootLen = static_cast<int>(strlen(pSubRoot));
 					pWList.UpdateRoot(pSubRoot, iRootLen);
 					retry = true;
 					bIgnoreLexer = false;
@@ -1707,7 +1716,7 @@ static bool EditCompleteWordCore(int iCondition, bool autoInsert) noexcept {
 	printf("Notepad4 AddDocWord(%u, %u): %.6f\n", pWList.nWordCount, pWList.nTotalLen, elapsed);
 #endif
 
-	const bool bShow = pWList.nWordCount > 0 && !(pWList.nWordCount == 1 && pWList.nTotalLen == (UINT)(iRootLen + 1));
+	const bool bShow = pWList.nWordCount > 0 && !(pWList.nWordCount == 1 && pWList.nTotalLen == static_cast<UINT>(iRootLen + 1));
 	const bool bUpdated = (autoCompletionConfig.iPreviousItemCount == 0)
 		// deleted some words. leave some words that no longer matches current input at the top.
 		|| (iCondition == AutoCompleteCondition_OnCharAdded && autoCompletionConfig.iPreviousItemCount - pWList.nWordCount > autoCompletionConfig.iVisibleItemCount)
@@ -1896,7 +1905,7 @@ void EditAutoCloseBraceQuote(int ch, AutoInsertCharacter what) noexcept {
 		}
 		// TODO: auto escape quotes inside string
 
-		const char tchIns[4] = { (char)(ch) };
+		const char tchIns[4] = { static_cast<char>(ch) };
 		SciCall_ReplaceSel(tchIns);
 		const Sci_Position iCurrentPos = (what == AutoInsertCharacter_Comma) ? iCurPos + 1 : iCurPos;
 		SciCall_SetSel(iCurrentPos, iCurrentPos);
@@ -2224,9 +2233,9 @@ void EditAutoIndent() noexcept {
 		SciCall_GetLine(iCurLine - 1, pLineBuf);
 		pLineBuf[iPrevLineLength] = '\0';
 
-		int ch = (uint8_t)pLineBuf[iPrevLineLength - 2];
+		int ch = static_cast<uint8_t>(pLineBuf[iPrevLineLength - 2]);
 		if (ch == '\r') {
-			ch = (uint8_t)pLineBuf[iPrevLineLength - 3];
+			ch = static_cast<uint8_t>(pLineBuf[iPrevLineLength - 3]);
 			iIndentLen = 1;
 		}
 		if (ch == '{' || ch == '[' || ch == '(') {
@@ -2304,7 +2313,7 @@ void EditAutoIndent() noexcept {
 			} else {
 				iIndentPos += pad;
 				while (pad-- > 0) {
-					*pPos++ = (char)ch;
+					*pPos++ = static_cast<char>(ch);
 				}
 			}
 			if (indent == AutoIndentType_IndentAndClose) {
@@ -2731,6 +2740,7 @@ void EditToggleCommentBlock(bool alternative) noexcept {
 	case NP2LEX_NSIS:
 	case NP2LEX_RESOURCESCRIPT:
 	case NP2LEX_RUST:
+	case NP2LEX_SAS:
 	case NP2LEX_SCALA:
 	case NP2LEX_SQL:
 	case NP2LEX_SWIFT:
