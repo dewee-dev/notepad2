@@ -374,11 +374,9 @@ INT_PTR CALLBACK GotoDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 			}
 		}
 
-		// from WinUser.h: GetComboBoxInfo() since Windows Vista, but CB_GETCOMBOBOXINFO since Windows XP.
 		COMBOBOXINFO cbi;
-		memset(&cbi, 0, sizeof(COMBOBOXINFO));
 		cbi.cbSize = sizeof(COMBOBOXINFO);
-		if (SendMessage(hwndGoto, CB_GETCOMBOBOXINFO, 0, AsInteger<LPARAM>(&cbi))) {
+		if (GetComboBoxInfo(hwndGoto, &cbi)) {
 			SHAutoComplete(cbi.hwndItem, SHACF_FILESYSTEM);
 		}
 		CenterDlgInParent(hwnd);
@@ -1900,7 +1898,7 @@ INT_PTR CALLBACK OpenWithDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lPa
 #endif
 		};
 		ListView_InsertColumn(hwndLV, 0, &lvc);
-		DirList_Init(hwndLV, nullptr);
+		DirList_Init(hwndLV);
 		DirList_Fill(hwndLV, tchOpenWithDir, DL_ALLOBJECTS, nullptr, false, flagNoFadeHidden, DS_NAME, false);
 		DirList_StartIconThread(hwndLV);
 		ListView_SetItemState(hwndLV, 0, LVIS_FOCUSED, LVIS_FOCUSED);
@@ -1947,7 +1945,7 @@ INT_PTR CALLBACK OpenWithDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lPa
 			HWND hwndLV = GetDlgItem(hwnd, IDC_OPENWITHDIR);
 			switch (pnmh->code) {
 			case LVN_GETDISPINFO:
-				DirList_GetDispInfo(hwndLV, lParam, flagNoFadeHidden);
+				DirList_GetDispInfo(hwndLV, lParam);
 				break;
 
 			case LVN_DELETEITEM:
