@@ -140,7 +140,7 @@ int	iChangeHistoryMarker;
 EditAutoCompletionConfig autoCompletionConfig;
 int iSelectOption;
 static int iLineSelectionMode;
-static bool bShowCodeFolding;
+bool bShowCodeFolding;
 extern CallTipInfo callTipInfo;
 static bool bViewWhiteSpace;
 static bool bViewEOLs;
@@ -1650,11 +1650,6 @@ void UpdateBookmarkMarginWidth() noexcept {
 	SciCall_SetMarginWidth(MarginNumber_Bookmark, width);
 }
 
-void UpdateFoldMarginWidth() noexcept {
-	const int width = bShowCodeFolding ? SciCall_TextWidth(STYLE_LINENUMBER, "+_") : 0;
-	SciCall_SetMarginWidth(MarginNumber_CodeFolding, width);
-}
-
 void SetWrapVisualFlags() noexcept {
 	if (bShowWordWrapSymbols) {
 		int wrapVisualFlags = 0;
@@ -2193,6 +2188,9 @@ void ValidateUILangauge() noexcept {
 	case LANG_KOREAN:
 		languageMenu = IDM_LANG_KOREAN;
 		break;
+	case LANG_POLISH:
+		languageMenu = IDM_LANG_POLISH;
+		break;
 	case LANG_PORTUGUESE:
 		languageMenu = IDM_LANG_PORTUGUESE_BRAZIL;
 		break;
@@ -2236,6 +2234,9 @@ void SetUILanguage(int menu) noexcept {
 		break;
 	case IDM_LANG_KOREAN:
 		lang = MAKELANGID(LANG_KOREAN, SUBLANG_DEFAULT);
+		break;
+	case IDM_LANG_POLISH:
+		lang = MAKELANGID(LANG_POLISH, SUBLANG_DEFAULT);
 		break;
 	case IDM_LANG_PORTUGUESE_BRAZIL:
 		lang = MAKELANGID(LANG_PORTUGUESE, SUBLANG_PORTUGUESE_BRAZILIAN);
@@ -4535,6 +4536,7 @@ LRESULT MsgCommand(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 	case IDM_LANG_PORTUGUESE_BRAZIL:
 	case IDM_LANG_FRENCH_FRANCE:
 	case IDM_LANG_RUSSIAN:
+	case IDM_LANG_POLISH:
 		SetUILanguage(LOWORD(wParam));
 		break;
 #endif
@@ -5063,8 +5065,8 @@ LRESULT MsgNotify(HWND hwnd, WPARAM wParam, LPARAM lParam) {
 
 			case StatusItem_EolMode: {
 				constexpr UINT mask = (SC_EOL_LF << 2*SC_EOL_CRLF) | (SC_EOL_CR << 2*SC_EOL_LF) | (SC_EOL_CRLF << 2*SC_EOL_CR);
-				iCurrentEOLMode = (mask >> (iCurrentEOLMode << 1)) & 3;
-				ConvertLineEndings(iCurrentEOLMode);
+				const int iNewEOLMode = (mask >> (iCurrentEOLMode << 1)) & 3;
+				ConvertLineEndings(iNewEOLMode);
 				return TRUE;
 			}
 

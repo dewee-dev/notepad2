@@ -74,7 +74,7 @@ Latest development builds (artifacts in Release configuration for each compiler 
 	* [Groovy](tools/lang/Groovy.groovy), up to Groovy 5.0.
 	* [Haskell](tools/lang/Haskell.hs), up to GHC 9.6.
 	* [Haxe](tools/lang/Haxe.hx), up to Haxe 4.3.
-	* [HTML](tools/lang/html.html), up to [WHATWG](https://html.spec.whatwg.org/multipage/) September 2024. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#html)
+	* [HTML](tools/lang/html.html), up to [WHATWG](https://html.spec.whatwg.org/multipage/) December 2024. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#html)
 		* ASP
 		* ASP.NET
 		* JSP
@@ -114,7 +114,7 @@ Latest development builds (artifacts in Release configuration for each compiler 
 	* [Perl](tools/lang/Perl.pl), up to Perl 5.36. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#perl)
 	* [PowerShell](tools/lang/PowerShell.ps1), up to PowerShell 7.2.
 	* [Python](tools/lang/Python.py), up to Python 3.13. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#python)
-	* [PHP Script](tools/lang/PHP.php), up to PHP 8.3. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#php)
+	* [PHP Script](tools/lang/PHP.php), up to PHP 8.4. [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#php)
 	* Windows Rescouce Script
 	* [R](tools/lang/R.r), up to R 4.2.
 	* [REBOL](tools/lang/Rebol.r) 3 and [Red](tools/lang/Red.red)
@@ -133,21 +133,21 @@ Latest development builds (artifacts in Release configuration for each compiler 
 		* [PostgreSQL](tools/lang/PostgreSQL.sql), PostgreSQL 14.
 		* [Transact-SQL](tools/lang/Transact-SQL.sql), SQL Server 2019.
 		* [Oracle](tools/lang/Oracle.sql), Oracle 20, incomplete.
-	* [Swift](tools/lang/Swift.swift), up to Swift 5.10.
+	* [Swift](tools/lang/Swift.swift), up to Swift 6.0.
 	* TCL, [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#tcl)
 	* [Texinfo](tools/lang/Texinfo.texi), up to Texinfo 7.1.
 	* [TOML File](https://toml.io/)
 	* [TypeScript](tools/lang/TypeScript.ts), up to TypeScript 5.4.
-	* Visual Basic, VB6, VBA, VB.NET
-	* VBScript
+	* Visual Basic, [VB.NET](tools/lang/VB.NET.vb), [VB 6.0 and VBA](tools/lang/VBA.bas)
+	* [VBScript](tools/lang/VBScript.vbs)
 	* [VHDL](tools/lang/VHDL.vhdl), up to VHDL 2019.
 	* Verilog HDL, up to [Verilog](tools/lang/Verilog.v) 2005 and [SystemVerilog](tools/lang/SystemVerilog.sv) 2017.
 	* [Vim Script](tools/lang/Vim.vim)
 	* [WebAssembly](https://github.com/WebAssembly/wabt/blob/main/src/lexer-keywords.txt), up to wabt 1.0.
 	* [WinHex Script](tools/lang/WinHex.whs) and template, up to WinHex 20.9.
-	* XML Document, [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#xml)
-		* XML Schema
-		* XML Stylesheet
+	* [XML Document](tools/lang/XML.xml), [Screenshots](https://github.com/zufuliu/notepad4/wiki/Screenshots#xml)
+		* [XML Schema](https://www.w3.org/XML/Schema)
+		* [XML Stylesheet](https://www.w3.org/Style/XSL/)
 		* SGML and DTD
 		* Apple Property List
 	* [YAML Document](https://yaml.org/)

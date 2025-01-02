@@ -1814,24 +1814,24 @@ void EditEscapeCChars(HWND hwnd) noexcept {
 		return;
 	}
 
-	EDITFINDREPLACE efr;
-	memset(&efr, 0, sizeof(efr));
-	efr.hwnd = hwnd;
-	SciCall_BeginUndoAction();
+	EDITFINDREPLACE * const efr = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
+	efr->hwnd = hwnd;
+	SciCall_BeginBatchUpdate();
 
-	strcpy(efr.szFind, "\\");
-	strcpy(efr.szReplace, "\\\\");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\\");
+	strcpy(efr->szReplace, "\\\\");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "\"");
-	strcpy(efr.szReplace, "\\\"");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\"");
+	strcpy(efr->szReplace, "\\\"");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "\'");
-	strcpy(efr.szReplace, "\\\'");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\'");
+	strcpy(efr->szReplace, "\\\'");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	SciCall_EndUndoAction();
+	NP2HeapFree(efr);
+	SciCall_EndBatchUpdate();
 }
 
 //=============================================================================
@@ -1847,24 +1847,24 @@ void EditUnescapeCChars(HWND hwnd) noexcept {
 		return;
 	}
 
-	EDITFINDREPLACE efr;
-	memset(&efr, 0, sizeof(efr));
-	efr.hwnd = hwnd;
-	SciCall_BeginUndoAction();
+	EDITFINDREPLACE * const efr = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
+	efr->hwnd = hwnd;
+	SciCall_BeginBatchUpdate();
 
-	strcpy(efr.szFind, "\\\\");
-	strcpy(efr.szReplace, "\\");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\\\\");
+	strcpy(efr->szReplace, "\\");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "\\\"");
-	strcpy(efr.szReplace, "\"");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\\\"");
+	strcpy(efr->szReplace, "\"");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "\\\'");
-	strcpy(efr.szReplace, "\'");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\\\'");
+	strcpy(efr->szReplace, "\'");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	SciCall_EndUndoAction();
+	NP2HeapFree(efr);
+	SciCall_EndBatchUpdate();
 }
 
 // XML/HTML predefined entity
@@ -1889,42 +1889,42 @@ void EditEscapeXHTMLChars(HWND hwnd) noexcept {
 		return;
 	}
 
-	EDITFINDREPLACE efr;
-	memset(&efr, 0, sizeof(efr));
-	efr.hwnd = hwnd;
-	SciCall_BeginUndoAction();
+	EDITFINDREPLACE * const efr = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
+	efr->hwnd = hwnd;
+	SciCall_BeginBatchUpdate();
 
-	strcpy(efr.szFind, "&");
-	strcpy(efr.szReplace, "&amp;");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "&");
+	strcpy(efr->szReplace, "&amp;");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "\"");
-	strcpy(efr.szReplace, "&quot;");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\"");
+	strcpy(efr->szReplace, "&quot;");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "\'");
-	strcpy(efr.szReplace, "&apos;");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "\'");
+	strcpy(efr->szReplace, "&apos;");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "<");
-	strcpy(efr.szReplace, "&lt;");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "<");
+	strcpy(efr->szReplace, "&lt;");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, ">");
-	strcpy(efr.szReplace, "&gt;");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, ">");
+	strcpy(efr->szReplace, "&gt;");
+	EditReplaceAllInSelection(hwnd, efr);
 
 	if (pLexCurrent->iLexer != SCLEX_XML) {
-		strcpy(efr.szFind, " ");
-		strcpy(efr.szReplace, "&nbsp;");
-		EditReplaceAllInSelection(hwnd, &efr, false);
+		strcpy(efr->szFind, " ");
+		strcpy(efr->szReplace, "&nbsp;");
+		EditReplaceAllInSelection(hwnd, efr);
 
-		strcpy(efr.szFind, "\t");
-		strcpy(efr.szReplace, "&emsp;");
-		EditReplaceAllInSelection(hwnd, &efr, false);
+		strcpy(efr->szFind, "\t");
+		strcpy(efr->szReplace, "&emsp;");
+		EditReplaceAllInSelection(hwnd, efr);
 	}
 
-	SciCall_EndUndoAction();
+	NP2HeapFree(efr);
+	SciCall_EndBatchUpdate();
 }
 
 //=============================================================================
@@ -1940,39 +1940,40 @@ void EditUnescapeXHTMLChars(HWND hwnd) noexcept {
 		return;
 	}
 
-	EDITFINDREPLACE efr;
-	memset(&efr, 0, sizeof(efr));
-	efr.hwnd = hwnd;
-	SciCall_BeginUndoAction();
+	EDITFINDREPLACE * const efr = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
+	efr->hwnd = hwnd;
+	SciCall_BeginBatchUpdate();
 
-	strcpy(efr.szFind, "&quot;");
-	strcpy(efr.szReplace, "\"");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "&quot;");
+	strcpy(efr->szReplace, "\"");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "&apos;");
-	strcpy(efr.szReplace, "\'");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "&apos;");
+	strcpy(efr->szReplace, "\'");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "&lt;");
-	strcpy(efr.szReplace, "<");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "&lt;");
+	strcpy(efr->szReplace, "<");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "&gt;");
-	strcpy(efr.szReplace, ">");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "&gt;");
+	strcpy(efr->szReplace, ">");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "&nbsp;");
-	strcpy(efr.szReplace, " ");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "&nbsp;");
+	strcpy(efr->szReplace, " ");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "&amp;");
-	strcpy(efr.szReplace, "&");
-	EditReplaceAllInSelection(hwnd, &efr, false);
+	strcpy(efr->szFind, "&amp;");
+	strcpy(efr->szReplace, "&");
+	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr.szFind, "&emsp;");
-	strcpy(efr.szReplace, "\t");
-	EditReplaceAllInSelection(hwnd, &efr, false);
-	SciCall_EndUndoAction();
+	strcpy(efr->szFind, "&emsp;");
+	strcpy(efr->szReplace, "\t");
+	EditReplaceAllInSelection(hwnd, efr);
+
+	NP2HeapFree(efr);
+	SciCall_EndBatchUpdate();
 }
 
 //=============================================================================
@@ -3608,14 +3609,13 @@ void EditStripTrailingBlanks(HWND hwnd, bool bIgnoreSelection) noexcept {
 	// Check if there is any selection... simply use a regular expression replace!
 	if (!bIgnoreSelection && !SciCall_IsSelectionEmpty()) {
 		if (!SciCall_IsRectangleSelection()) {
-			EDITFINDREPLACE efrTrim;
-			memset(&efrTrim, 0, sizeof(efrTrim));
-			efrTrim.hwnd = hwnd;
-			efrTrim.fuFlags = SCFIND_REGEXP;
-			memcpy(efrTrim.szFind, "[ \t]+$", CSTRLEN("[ \t]+$"));
-			if (EditReplaceAllInSelection(hwnd, &efrTrim, false)) {
-				return;
-			}
+			EDITFINDREPLACE * const efrTrim = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
+			efrTrim->hwnd = hwnd;
+			efrTrim->fuFlags = SCFIND_REGEXP;
+			memcpy(efrTrim->szFind, "[ \t]+$", CSTRLEN("[ \t]+$"));
+			EditReplaceAllInSelection(hwnd, efrTrim, EditReplaceAllFlag_UndoGroup);
+			NP2HeapFree(efrTrim);
+			return;
 		}
 	}
 
@@ -3649,14 +3649,13 @@ void EditStripLeadingBlanks(HWND hwnd, bool bIgnoreSelection) noexcept {
 	// Check if there is any selection... simply use a regular expression replace!
 	if (!bIgnoreSelection && !SciCall_IsSelectionEmpty()) {
 		if (!SciCall_IsRectangleSelection()) {
-			EDITFINDREPLACE efrTrim;
-			memset(&efrTrim, 0, sizeof(efrTrim));
-			efrTrim.hwnd = hwnd;
-			efrTrim.fuFlags = SCFIND_REGEXP;
-			memcpy(efrTrim.szFind, "^[ \t]+", CSTRLEN("^[ \t]+"));
-			if (EditReplaceAllInSelection(hwnd, &efrTrim, false)) {
-				return;
-			}
+			EDITFINDREPLACE * const efrTrim = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
+			efrTrim->hwnd = hwnd;
+			efrTrim->fuFlags = SCFIND_REGEXP;
+			memcpy(efrTrim->szFind, "^[ \t]+", CSTRLEN("^[ \t]+"));
+			EditReplaceAllInSelection(hwnd, efrTrim, EditReplaceAllFlag_UndoGroup);
+			NP2HeapFree(efrTrim);
+			return;
 		}
 	}
 
@@ -4365,22 +4364,28 @@ void EditEnsureSelectionVisible() noexcept {
 }
 
 void EditEnsureConsistentLineEndings() noexcept {
+	const size_t lineCount = SciCall_GetLineCount();
+	if (lineCount < 2) {
+		return;
+	}
+	const size_t actions = SciCall_GetUndoActions();
+	if (lineCount + actions >= MAX_NON_UTF8_SIZE) {
+		// Scintilla undo stack is indexed with int
+		return;
+	}
+
 	const int iEOLMode = SciCall_GetEOLMode();
 	if (iEOLMode == SC_EOL_CRLF) {
 #if defined(_WIN64)
 		const int options = SciCall_GetDocumentOptions();
-		if (!(options & SC_DOCUMENTOPTION_TEXT_LARGE)) {
-			const Sci_Position dwLength = SciCall_GetLength() + SciCall_GetLineCount();
-			if (dwLength >= INT_MAX) {
+		if (!(options & SC_DOCUMENTOPTION_TEXT_LARGE))
+#endif
+		{
+			const size_t dwLength = SciCall_GetLength() + lineCount;
+			if (dwLength >= MAX_NON_UTF8_SIZE) {
 				return;
 			}
 		}
-#else
-		const DWORD dwLength = static_cast<DWORD>(SciCall_GetLength()) + static_cast<DWORD>(SciCall_GetLineCount());
-		if (dwLength >= INT_MAX) {
-			return;
-		}
-#endif
 	}
 
 	SciCall_ConvertEOLs(iEOLMode);
@@ -5042,13 +5047,13 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 					EditFindAll(lpefr, true);
 				} else {
 					bReplaceInitialized = true;
-					EditReplaceAll(lpefr->hwnd, lpefr, true);
+					EditReplaceAll(lpefr->hwnd, lpefr);
 				}
 				break;
 
 			case IDC_REPLACEINSEL:
 				bReplaceInitialized = true;
-				EditReplaceAllInSelection(lpefr->hwnd, lpefr, true);
+				EditReplaceAllInSelection(lpefr->hwnd, lpefr, EditReplaceAllFlag_Default);
 				break;
 			}
 		}
@@ -5359,13 +5364,13 @@ void EditFindPrev(const EDITFINDREPLACE *lpefr, bool fExtendSelection) noexcept 
 //
 // EditReplace()
 //
-bool EditReplace(HWND hwnd, const EDITFINDREPLACE *lpefr) noexcept {
+void EditReplace(HWND hwnd, const EDITFINDREPLACE *lpefr) noexcept {
 	BOOL bReplaceRE;
 	char szFind2[NP2_FIND_REPLACE_LIMIT];
 	char *pszReplace2;
 	const int searchFlags = EditPrepareReplace(hwnd, szFind2, &pszReplace2, &bReplaceRE, lpefr);
 	if (searchFlags == NP2_InvalidSearchFlags) {
-		return false;
+		return;
 	}
 
 	const Sci_Position iSelStart = SciCall_GetSelectionStart();
@@ -5390,17 +5395,18 @@ bool EditReplace(HWND hwnd, const EDITFINDREPLACE *lpefr) noexcept {
 		if (!bSuppressNotFound) {
 			InfoBoxWarn(MB_OK, L"MsgNotFound", IDS_NOTFOUND);
 		}
-		return false;
+		return;
 	}
 
 	if (iSelStart != ttf.chrgText.cpMin || iSelEnd != ttf.chrgText.cpMax) {
 		LocalFree(pszReplace2);
 		EditSelectEx(ttf.chrgText.cpMin, ttf.chrgText.cpMax);
-		return false;
+		return;
 	}
 
 	SciCall_SetTargetRange(ttf.chrgText.cpMin, ttf.chrgText.cpMax);
 	SciCall_ReplaceTargetEx(bReplaceRE, -1, pszReplace2);
+	LocalFree(pszReplace2);
 
 	ttf.chrg.cpMin = SciCall_GetTargetEnd();
 	ttf.chrg.cpMax = SciCall_GetLength();
@@ -5426,9 +5432,6 @@ bool EditReplace(HWND hwnd, const EDITFINDREPLACE *lpefr) noexcept {
 			InfoBoxWarn(MB_OK, L"MsgNotFound", IDS_NOTFOUND);
 		}
 	}
-
-	LocalFree(pszReplace2);
-	return true;
 }
 
 //=============================================================================
@@ -5772,18 +5775,17 @@ static void ShwowReplaceCount(Sci_Position iCount) noexcept {
 //
 // EditReplaceAll()
 //
-bool EditReplaceAll(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bShowInfo) noexcept {
+void EditReplaceAll(HWND hwnd, const EDITFINDREPLACE *lpefr) noexcept {
 	BOOL bReplaceRE;
 	char szFind2[NP2_FIND_REPLACE_LIMIT];
 	char *pszReplace2;
 	const int searchFlags = EditPrepareReplace(hwnd, szFind2, &pszReplace2, &bReplaceRE, lpefr);
 	if (searchFlags == NP2_InvalidSearchFlags) {
-		return false;
+		return;
 	}
 
 	// Show wait cursor...
 	BeginWaitCursor();
-	SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
 #if 0
 	StopWatch watch;
 	watch.Start();
@@ -5793,8 +5795,9 @@ bool EditReplaceAll(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bShowInfo) noe
 	Sci_TextToFindFull ttf = { { 0, SciCall_GetLength() }, szFind2, { 0, 0 } };
 	Sci_Position iCount = 0;
 	while (SciCall_FindTextFull(searchFlags, &ttf) >= 0) {
-		if (++iCount == 1) {
-			SciCall_BeginUndoAction();
+		++iCount;
+		if (iCount == 1) {
+			SciCall_BeginBatchUpdate();
 		}
 
 		SciCall_SetTargetRange(ttf.chrgText.cpMin, ttf.chrgText.cpMax);
@@ -5830,32 +5833,25 @@ bool EditReplaceAll(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bShowInfo) noe
 	watch.Stop();
 	watch.ShowLog("EditReplaceAll() time");
 #endif
-	SendMessage(hwnd, WM_SETREDRAW, TRUE, 0);
 	if (iCount) {
+		SciCall_EndBatchUpdate();
 		EditEnsureSelectionVisible();
-		SciCall_EndUndoAction();
-		InvalidateRect(hwnd, nullptr, TRUE);
 	}
 
 	// Remove wait cursor
 	EndWaitCursor();
-
-	if (bShowInfo) {
-		ShwowReplaceCount(iCount);
-	}
-
 	LocalFree(pszReplace2);
-	return true;
+	ShwowReplaceCount(iCount);
 }
 
 //=============================================================================
 //
 // EditReplaceAllInSelection()
 //
-bool EditReplaceAllInSelection(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bShowInfo) noexcept {
+void EditReplaceAllInSelection(HWND hwnd, const EDITFINDREPLACE *lpefr, EditReplaceAllFlag flag) noexcept {
 	if (SciCall_IsRectangleSelection()) {
 		NotifyRectangleSelection();
-		return false;
+		return;
 	}
 
 	BOOL bReplaceRE;
@@ -5863,20 +5859,20 @@ bool EditReplaceAllInSelection(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bSh
 	char *pszReplace2;
 	const int searchFlags = EditPrepareReplace(hwnd, szFind2, &pszReplace2, &bReplaceRE, lpefr);
 	if (searchFlags == NP2_InvalidSearchFlags) {
-		return false;
+		return;
 	}
 
 	// Show wait cursor...
 	BeginWaitCursor();
-	SendMessage(hwnd, WM_SETREDRAW, FALSE, 0);
 
 	const bool bRegexStartOfLine = bReplaceRE && (szFind2[0] == '^');
 	Sci_TextToFindFull ttf = { { SciCall_GetSelectionStart(), SciCall_GetLength() }, szFind2, { 0, 0 } };
 	Sci_Position iCount = 0;
 	while (SciCall_FindTextFull(searchFlags, &ttf) >= 0) {
 		if (ttf.chrgText.cpMax <= SciCall_GetSelectionEnd()) {
-			if (++iCount == 1) {
-				SciCall_BeginUndoAction();
+			++iCount;
+			if (iCount == 1 && (flag & EditReplaceAllFlag_UndoGroup) != 0) {
+				SciCall_BeginBatchUpdate();
 			}
 
 			SciCall_SetTargetRange(ttf.chrgText.cpMin, ttf.chrgText.cpMax);
@@ -5911,8 +5907,10 @@ bool EditReplaceAllInSelection(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bSh
 		}
 	}
 
-	SendMessage(hwnd, WM_SETREDRAW, TRUE, 0);
 	if (iCount) {
+		if ((flag & EditReplaceAllFlag_UndoGroup) != 0) {
+			SciCall_EndBatchUpdate();
+		}
 		const Sci_Position iPos = SciCall_GetTargetEnd();
 		if (SciCall_GetSelectionEnd() < iPos) {
 			Sci_Position iAnchorPos = SciCall_GetAnchor();
@@ -5926,20 +5924,14 @@ bool EditReplaceAllInSelection(HWND hwnd, const EDITFINDREPLACE *lpefr, bool bSh
 
 			EditSelectEx(iAnchorPos, iCurrentPos);
 		}
-
-		SciCall_EndUndoAction();
-		InvalidateRect(hwnd, nullptr, TRUE);
 	}
 
 	// Remove wait cursor
 	EndWaitCursor();
-
-	if (bShowInfo) {
+	LocalFree(pszReplace2);
+	if ((flag & EditReplaceAllFlag_ShowInfo) != 0) {
 		ShwowReplaceCount(iCount);
 	}
-
-	LocalFree(pszReplace2);
-	return true;
 }
 
 //=============================================================================
@@ -6618,19 +6610,19 @@ void EditUpdateTimestampMatchTemplate(HWND hwnd) noexcept {
 #endif
 
 	const UINT cpEdit = SciCall_GetCodePage();
-	EDITFINDREPLACE efrTS;
-	memset(&efrTS, 0, sizeof(efrTS));
-	efrTS.hwnd = hwnd;
-	efrTS.fuFlags = SCFIND_REGEXP;
+	EDITFINDREPLACE * const efrTS = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
+	efrTS->hwnd = hwnd;
+	efrTS->fuFlags = SCFIND_REGEXP;
 
-	WideCharToMultiByte(cpEdit, 0, wchFind, -1, efrTS.szFind, COUNTOF(efrTS.szFind), nullptr, nullptr);
-	WideCharToMultiByte(cpEdit, 0, wchReplace, -1, efrTS.szReplace, COUNTOF(efrTS.szReplace), nullptr, nullptr);
+	WideCharToMultiByte(cpEdit, 0, wchFind, -1, efrTS->szFind, COUNTOF(efrTS->szFind), nullptr, nullptr);
+	WideCharToMultiByte(cpEdit, 0, wchReplace, -1, efrTS->szReplace, COUNTOF(efrTS->szReplace), nullptr, nullptr);
 
 	if (!SciCall_IsSelectionEmpty()) {
-		EditReplaceAllInSelection(hwnd, &efrTS, true);
+		EditReplaceAllInSelection(hwnd, efrTS, EditReplaceAllFlag_Default);
 	} else {
-		EditReplaceAll(hwnd, &efrTS, true);
+		EditReplaceAll(hwnd, efrTS);
 	}
+	NP2HeapFree(efrTS);
 }
 
 struct UnicodeControlCharacter {
