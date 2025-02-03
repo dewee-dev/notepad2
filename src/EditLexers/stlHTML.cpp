@@ -13,12 +13,15 @@ static KEYWORDLIST Keywords_HTML = {{
 "s samp script search section select slot small source spacer span strike strong style sub summary sup svg "
 "table tbody td template textarea tfoot th thead time title tr track tt u ul var video wbr xml xmp "
 
-, // 1 JavaScript
+, // 1 void tag
+" area base basefont br col command embed frame hr img input isindex keygen link meta p param source track wbr "
+
+, // 2 JavaScript
 "Infinity NaN arguments async await break case catch class const continue debugger default delete do else export extends "
 "false finally for function get globalThis if import in instanceof let new null of return set static super switch "
 "this throw true try typeof undefined var void while with yield "
 
-, // 2 VBScript
+, // 3 VBScript
 "Alias And As Attribute Begin Boolean ByRef Byte ByVal Call Case Char Class Compare Const Continue Currency "
 "Decimal Declare Default Dim Do Double "
 "Each Else ElseIf Empty End EndIf Enum Eqv Erase Error Event Execute ExecuteGlobal Exit Explicit "
@@ -28,16 +31,16 @@ static KEYWORDLIST Keywords_HTML = {{
 "Select Set Shared Single Static Step Stop String Sub Then To True Type TypeOf Unload Until Variant "
 "Wend While With WithEvents Xor "
 
-, // 3 SGML
+, // 4 SGML
 "ANY ATTLIST CDATA DOCTYPE ELEMENT EMPTY ENTITIES ENTITY FIXED ID IDREF IDREFS IGNORE IMPLIED INCLUDE "
 "NDATA NMTOKEN NMTOKENS NOTATION PCDATA PUBLIC REQUIRED SGML SYSTEM doctype "
 
-, // 4 attribute
+, // 5 attribute
 "^aria- ^data- "
 "abbr accept accept-charset accesskey action align alink allow allowfullscreen allowtransparency alpha alt archive "
 "as async autocapitalize autocomplete autocorrect autofocus autoplay axis "
 "background behavior bgcolor blocking border bordercolor bottommargin "
-"cellpadding cellspacing challenge char charoff charset checked cite class classid clear "
+"cellpadding cellspacing challenge char charoff charset checked cite class classid clear closedby "
 "code codebase codetype color colorspace cols colspan compact content contenteditable contextmenu controls coords "
 "crossorigin "
 "data datafld dataformatas datapagesize datasrc datatype datetime declare decoding default defer "
@@ -73,30 +76,32 @@ static KEYWORDLIST Keywords_HTML = {{
 "valign value valuetype version vlink vocab vspace width wrap writingsuggestions "
 "xml:base xml:lang xmlns xmlns:xsi xsi:schemaLocation "
 
-, // 5 value
+, // 6 value
 "GET POST UTF-8 _blank _parent _self _top "
 "about allow-downloads allow-forms allow-modals allow-orientation-lock "
 "allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts "
 "allow-top-navigation allow-top-navigation-by-user-activation allow-top-navigation-to-custom-protocols alternate always "
-"anonymous application-name application/octet-stream application/x-www-form-urlencoded application/xml author auto "
+"anonymous any application-name application/octet-stream application/x-www-form-urlencoded application/xml author auto "
 "blob bookmark "
-"canonical captions chapters characters checkbox circ circle closed "
+"canonical captions chapters characters checkbox circ circle closed closerequest "
 "color-scheme content-language content-security-policy content-type "
-"date datetime-local decimal default-style description descriptions display-p3 dns-prefetch done "
-"eager email en enter expect external false fetch file generator get go hard help hide http https icon image keywords "
-"lazy license limited-srgb lower-alpha lower-roman ltr "
-"mailto manual metadata module modulepreload month multipart/form-data "
-"never next no no-referrer no-referrer-when-downgrade nofollow none noopener noreferrer number numeric "
-"off on opener origin origin-when-cross-origin origin-when-crossorigin "
+"dark date datetime-local decimal default-style description descriptions device-height device-width display-p3 "
+"dns-prefetch done "
+"eager email en enter expect external false fetch file generator get go hard help hide hint http https "
+"icon image initial-scale interactive-widget keywords lazy license light limited-srgb lower-alpha lower-roman ltr "
+"mailto manual maximum-scale metadata minimum-scale module modulepreload month multipart/form-data "
+"never next no no-referrer no-referrer-when-downgrade nofollow none noopener noreferrer normal number numeric "
+"off on only opener origin origin-when-cross-origin origin-when-crossorigin overlays-content "
 "password pingback plaintext-only poly polygon post preconnect prefetch prerender prev previous privacy-policy "
-"radio range rect rectangle referrer refresh render reset row rowgroup rtl "
+"radio range rect rectangle referrer refresh render reset resizes-content resizes-visual row rowgroup rtl "
 "same-origin self send sentences set-cookie show sms soft strict-origin strict-origin-when-cross-origin stylesheet "
 "submit subtitles sync "
 "tag tel terms-of-service text/css text/ecmascript text/javascript text/jscript text/livescript text/plain text/xml "
 "theme-color toggle true "
-"unsafe-url until-found upper-alpha upper-roman url use-credentials utf-8 week words x-ua-compatible yes "
+"unsafe-url until-found upper-alpha upper-roman url use-credentials user-scalable utf-8 viewport week words "
+"x-ua-compatible yes "
 
-, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
+, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 //--Autogenerated -- end of section automatically generated
 }};
 
@@ -152,11 +157,12 @@ EDITLEXER lexHTML = {
 		0, 0,
 		0, 0
 		, KeywordAttr32(0, KeywordAttr_PreSorted) // tag
-		| KeywordAttr32(1, KeywordAttr_PreSorted | KeywordAttr_NoAutoComp) // JavaScript
-		| KeywordAttr32(2, KeywordAttr_MakeLower | KeywordAttr_PreSorted | KeywordAttr_NoAutoComp) // VBScript
-		| KeywordAttr32(3, KeywordAttr_PreSorted) // SGML
-		| KeywordAttr32(4, KeywordAttr_PreSorted) // attribute
-		| KeywordAttr32(5, KeywordAttr_NoLexer) // value
+		| KeywordAttr32(1, KeywordAttr_PreSorted | KeywordAttr_NoAutoComp) // void tag
+		| KeywordAttr32(2, KeywordAttr_PreSorted | KeywordAttr_NoAutoComp) // JavaScript
+		| KeywordAttr32(3, KeywordAttr_MakeLower | KeywordAttr_PreSorted | KeywordAttr_NoAutoComp) // VBScript
+		| KeywordAttr32(4, KeywordAttr_PreSorted) // SGML
+		| KeywordAttr32(5, KeywordAttr_PreSorted) // attribute
+		| KeywordAttr32(6, KeywordAttr_NoLexer) // value
 		, 0,
 		0, 0,
 //Settings--Autogenerated -- end of section automatically generated

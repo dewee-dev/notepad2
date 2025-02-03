@@ -33,7 +33,7 @@ public:
 	explicit CharBuffer(size_t size) noexcept {
 		if (size <= StackSize) {
 			ptr = buffer;
-			memset(buffer, '\0', StackSize);
+			memset(buffer, 0, StackSize);
 		} else {
 			ptr = static_cast<char *>(NP2HeapAlloc(size));
 		}
@@ -708,8 +708,8 @@ enum {
 	GroovyKeywordIndex_Annotation = 7,
 	GroovyKeywordIndex_GroovyDoc = 9,
 	HTMLKeywordIndex_Tag = 0,
-	HTMLKeywordIndex_Attribute = 4,
-	HTMLKeywordIndex_Value = 5,
+	HTMLKeywordIndex_Attribute = 5,
+	HTMLKeywordIndex_Value = 6,
 	HaxeKeywordIndex_Preprocessor = 1,
 	HaxeKeywordIndex_CommentTag = 8,
 	InnoKeywordIndex_Directive = 4,
@@ -723,7 +723,7 @@ enum {
 	KotlinKeywordIndex_KDoc = 8,
 	NSISKeywordIndex_PredefinedVariable = 5,
 	PHPKeywordIndex_PredefinedVariable = 4,
-	PHPKeywordIndex_Phpdoc = 11,
+	PHPKeywordIndex_Phpdoc = 12,
 	PerlKeywordIndex_Variable = 2,
 	PowerShellKeywordIndex_PredefinedVariable = 4,
 	PythonKeywordIndex_Decorator = 7,
@@ -1913,17 +1913,6 @@ void EditAutoCloseBraceQuote(int ch, AutoInsertCharacter what) noexcept {
 	}
 }
 
-static inline bool IsHtmlVoidTag(const char *word) noexcept {
-	// same as htmlVoidTagList in scintilla/lexlib/DocUtils.h
-	const char *p = StrStrIA(
-		// void elements
-		" area base basefont br col command embed frame hr img input isindex keygen link meta param source track wbr "
-		// end tag can be omitted
-		"p "
-		, word);
-	return p != nullptr;
-}
-
 void EditAutoCloseXMLTag() noexcept {
 	char tchBuf[512];
 	const Sci_Position iCurPos = SciCall_GetCurrentPos();
@@ -1998,7 +1987,8 @@ void EditAutoCloseXMLTag() noexcept {
 			tchIns[cchIns] = ' ';
 			tchIns[cchIns + 1] = '\0';
 
-			if (cchIns > 2 && (pLexCurrent->iLexer == SCLEX_HTML || pLexCurrent->iLexer == SCLEX_PHPSCRIPT)) {
+			if (cchIns > 3 && (pLexCurrent->iLexer != SCLEX_XML)) {
+				// HTML void tag except <p>
 				if (IsHtmlVoidTag(tchIns + 1)) {
 					autoClosed = true;
 					cchIns = 0;
