@@ -834,7 +834,7 @@ void EditDetectIndentation(LPCSTR lpData, DWORD cbData, EditFileVars &fv) noexce
 	const uint8_t * const end = ptr + cbData;
 	#define MAX_DETECTED_TAB_WIDTH	8
 	// line count for ambiguous lines, line indented by 1 to 8 spaces, line starts with tab.
-	uint32_t indentLineCount[1 + MAX_DETECTED_TAB_WIDTH + 1] = { 0 };
+	uint32_t indentLineCount[1 + MAX_DETECTED_TAB_WIDTH + 1]{};
 	int prevIndentCount = 0;
 	int prevTabWidth = 0;
 
@@ -4982,6 +4982,7 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 					bCloseDlg = false;
 				}
 			}
+			mask |= lpefr->option & (bIsFindDlg ? FindReplaceOption_CloseReplace : FindReplaceOption_CloseFind);
 			lpefr->option = mask;
 
 			// Save MRUs
@@ -5483,7 +5484,7 @@ void EditMarkAll::Reset(int findFlag, Sci_Position iSelCount, LPSTR text) noexce
 }
 
 void EditMarkAll::Start(BOOL bChanged, int findFlag, Sci_Position iSelCount, LPSTR text) noexcept {
-	if (!bChanged && (findFlag == markFlag
+	if (!bChanged && (findFlag == (markFlag & (NP2_SearchForLineEnd - 1))
 		&& iSelCount == length
 		// _stricmp() is not safe for DBCS string.
 		&& memcmp(text, pszText, iSelCount) == 0)) {
@@ -5501,9 +5502,16 @@ void EditMarkAll::Start(BOOL bChanged, int findFlag, Sci_Position iSelCount, LPS
 			UpdateStatusbar();
 			return;
 		}
+	} else if (findFlag & SCFIND_REGEXP) {
+		// see BuiltinRegex::FindText()
+		const char ch = text[iSelCount - 1];
+		if (ch == '$' && text[iSelCount - 2] != '\\') {
+			markFlag |= NP2_SearchForLineEnd;
+		}
 	}
 
 	//EditMarkAll_Runs = 0;
+	bookmarkForFindAll = false;
 	if (findFlag & NP2_MarkAllBookmark) {
 		bookmarkForFindAll = (findFlag & NP2_FromFindAll) != 0;
 		Style_SetBookmark();
@@ -5609,8 +5617,8 @@ void EditMarkAll::Continue(HANDLE timer) noexcept {
 			continue;
 		}
 
-		if (index != 0 && iPos == cpMin && (findFlag & NP2_MarkAllSelectAll) == 0) {
-			// merge adjacent indicator ranges
+		if (index != 0 && iPos == cpMin && (findFlag & (NP2_MarkAllSelectAll | NP2_SearchForLineEnd)) == 0) {
+			// TODO: avoid merge adjacent indicator ranges when they are not on same line.
 			ranges[index - 1] += iSelCount;
 		} else {
 			ranges[index] = iPos;
@@ -6578,10 +6586,10 @@ void EditInsertDateTime(bool bShort) noexcept {
 }
 
 void EditUpdateTimestampMatchTemplate(HWND hwnd) noexcept {
-	WCHAR wchFind[256] = {0};
+	WCHAR wchFind[256]{};
 	IniGetString(INI_SECTION_NAME_FLAGS, L"TimeStamp", L"\\$Date:[^\\$]+\\$ | $Date: %Y/%m/%d %H:%M:%S $", wchFind, COUNTOF(wchFind));
 
-	WCHAR wchTemplate[256] = {0};
+	WCHAR wchTemplate[256]{};
 	LPWSTR pwchSep = StrChr(wchFind, L'|');
 	if (pwchSep != nullptr) {
 		lstrcpy(wchTemplate, pwchSep + 1);
