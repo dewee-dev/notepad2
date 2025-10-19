@@ -970,11 +970,11 @@ int AddStyleSeparator(LPCEDITLEXER pLex, int ch, int chPrev, int style) noexcept
 	}
 	// var name; return .5; CSS property: 1 #1 .5 --name;
 	if (BitTestEx(DefaultWordCharSet, chPrev)) {
-		if (BitTestEx(DefaultWordCharSet, ch) || ch == '$' || ch == '#' || (ch == '-' && pLex->iLexer == SCLEX_CSS)) {
+		if (BitTestEx(DefaultWordCharSet, ch) || (ch == '-' && pLex->iLexer == SCLEX_CSS)) {
 			// TODO: improve CSS An+B when B is negative, https://www.w3.org/TR/css-syntax-3/#anb-microsyntax
 			return SpaceOption_SpaceBefore;
 		}
-		if (ch == '.' && style != pLex->operatorStyle && style != pLex->operatorStyle2) {
+		if ((ch == '.' || ch == '$' || ch == '#') && style != pLex->operatorStyle && style != pLex->operatorStyle2) {
 			return SpaceOption_SpaceBefore;
 		}
 	}
@@ -1333,18 +1333,20 @@ void EditFormatCode(int menu) noexcept {
 				const uint8_t style = styledText[offset];
 				if (style > pLex->commentStyleMarker) {
 					const uint8_t ch = textBuffer[offset];
+					if (ch == '\\' && style != pLex->escapeCharacterStyle) {
+						// line continuation
+						const uint8_t chNext = textBuffer[offset + 1];
+						if (chNext == '\n' || chNext == '\r') {
+							offset += (chNext == '\r' && textBuffer[offset + 2] == '\n') ? 2 : 1;
+							continue;
+						}
+					}
+
 					int spaceOption = SpaceOption_None;
 					if (style != stylePrev) {
 						spaceOption = AddStyleSeparator(pLex, ch, chPrev, style);
 						if (spaceOption & SpaceOption_SpaceBefore) {
 							styledText[index++] = ' ';
-						}
-					} else if (ch == '\\') {
-						// line continuation
-						const uint8_t chNext = textBuffer[offset + 1];
-						if (chNext == '\n' || chNext == '\r') {
-							offset += (chNext == '\r' && offset + 2 < textLength && textBuffer[offset + 2] == '\n') ? 2 : 1;
-							continue;
 						}
 					}
 					chPrev = ch;
