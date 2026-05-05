@@ -405,6 +405,32 @@ LexerConfigMap = {
 		'plain_text_file': True,
 	},
 
+	'NP2LEX_ELIXIR': {
+		'line_comment_string': '#',
+		'comment_style_marker': 'SCE_ERLANG_COMMENTLINE',
+		'indent_based_folding': True,
+		'indent_guide_style': 'forward',
+		'default_fold_level': ['function'],
+		'escape_char_style': 'SCE_ERLANG_ESCAPECHAR',
+		'raw_string_style': ['SCE_ERLANG_VERBATIM_SIGIL', 'SCE_ERLANG_TRIPLE_SIGIL_SQ', 'SCE_ERLANG_TRIPLE_SIGIL_DQ'],
+		'none_quote_style': 'SCE_ERLANG_CHARACTER',
+		'operator_style': ['SCE_ERLANG_OPERATOR', 'SCE_ERLANG_OPERATOR2'],
+		'string_style_range': ['SCE_ERLANG_CHARACTER', 'SCE_ERLANG_ESCAPECHAR'],
+	},
+	'NP2LEX_ERLANG': {
+		'line_comment_string': '%',
+		'comment_style_marker': 'SCE_ERLANG_COMMENTLINE',
+		'shebang_exe_name': 'escript',
+		'indent_based_folding': True,
+		'indent_guide_style': 'forward',
+		'default_fold_level': ['function'],
+		'escape_char_style': 'SCE_ERLANG_ESCAPECHAR',
+		'raw_string_style': ['SCE_ERLANG_TRIPLE_STRING_SQ', 'SCE_ERLANG_TRIPLE_STRING_DQ', 'SCE_ERLANG_VERBATIM_SIGIL', 'SCE_ERLANG_TRIPLE_SIGIL_SQ', 'SCE_ERLANG_TRIPLE_SIGIL_DQ'],
+		'none_quote_style': 'SCE_ERLANG_CHARACTER',
+		'operator_style': ['SCE_ERLANG_OPERATOR', 'SCE_ERLANG_OPERATOR2'],
+		'string_style_range': ['SCE_ERLANG_CHARACTER', 'SCE_ERLANG_ESCAPECHAR'],
+	},
+
 	'NP2LEX_FORTRAN': {
 		'default_fold_ignore_inner': 'SCE_F_FUNCTION_DEFINITION',
 		'line_comment_string': ['!'], # omited '*'
@@ -824,6 +850,19 @@ LexerConfigMap = {
 			'css_style(SCE_CSS_ESCAPECHAR)', 'css_style(SCE_CSS_STRING_SQ)', 'css_style(SCE_CSS_STRING_DQ)', 'css_style(SCE_CSS_URL)'],
 		'plain_text_style': ['SCE_H_DEFAULT'],
 	},
+	'NP2LEX_POWERBUILDER': {
+		'cpp_style_comment': True,
+		'comment_style_marker': 'SCE_POWERBUILDER_COMMENTBLOCK',
+		'indent_based_folding': True,
+		'indent_guide_style': 'forward',
+		'default_fold_level': ['function'],
+		'escape_char_start': '~',
+		'escape_char_style': 'SCE_POWERBUILDER_ESCAPECHAR',
+		'operator_style': ['SCE_POWERBUILDER_OPERATOR'],
+		'cpp_preprocessor': True,
+		'extra_word_char': '-$#%',
+		'string_style_range': ['SCE_POWERBUILDER_STRING_SQ', 'SCE_POWERBUILDER_ESCAPECHAR'],
+	},
 	'NP2LEX_POWERSHELL': {
 		'line_comment_string': '#',
 		'block_comment_string': ('<#', '#>'),
@@ -994,6 +1033,7 @@ LexerConfigMap = {
 		'default_fold_level': ['class', 'function'],
 		'default_fold_ignore_inner': 'SCE_SWIFT_FUNCTION_DEFINITION',
 		'escape_char_style': 'SCE_SWIFT_ESCAPECHAR',
+		'raw_string_style': ['SCE_SWIFT_STRING_ED', 'SCE_SWIFT_TRIPLE_STRING_ED'],
 		'angle_bracket_generic': True,
 		'generic_type_style': ['SCE_SWIFT_CLASS', 'SCE_SWIFT_STRUCT', 'SCE_SWIFT_PROTOCOL', 'SCE_SWIFT_ENUM'],
 		'operator_style': ['SCE_SWIFT_OPERATOR', 'SCE_SWIFT_OPERATOR2'],
@@ -1046,6 +1086,18 @@ LexerConfigMap = {
 		'extra_word_char': '$#@',
 		#'ignore_word_style': ['SCE_JS_WORD', 'SCE_JS_WORD2', 'SCE_JS_DIRECTIVE'],
 		'string_style_range': ['SCE_JSX_TEXT', 'SCE_JS_ESCAPECHAR'],
+	},
+	'NP2LEX_TYPST': {
+		'cpp_style_comment': True,
+		'comment_style_marker': 'SCE_TYPST_COMMENT_BLOCK',
+		'default_fold_level': ['header1', 'header2', 'header3'],
+		'escape_char_style': 'SCE_TYPST_ESCAPECHAR',
+		'escape_punctuation': True,
+		'none_quote_style': 'SCE_TYPST_OPERATOR',
+		'operator_style': ['SCE_TYPST_OPERATOR'],
+		'extra_word_char': '-',
+		'string_style_range': ['SCE_TYPST_STRING', 'SCE_TYPST_ESCAPECHAR'],
+		'plain_text_style': ['SCE_TYPST_DEFAULT'],
 	},
 
 	'NP2LEX_VBSCRIPT': {
@@ -1328,7 +1380,7 @@ def BuildLexerConfigContent(rid, keywordAttr):
 	styles = config.get('character_style', ['0'])
 	output.append(f"{indent}{styles[0]}, {config.get('none_quote_style', '0')},")
 	# operator styles
-	styles = config.get('operator_style', []) + ['0', '0']
+	styles = [*config.get('operator_style', []), '0', '0']
 	output.append(f"{indent}{styles[0]}, {styles[1]},")
 
 	# keyword attribute

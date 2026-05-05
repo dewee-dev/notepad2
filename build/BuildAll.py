@@ -14,7 +14,7 @@ localeDir = os.path.abspath('../locale')
 notepad4_rc = os.path.abspath('../src/Notepad4.rc')
 matepath_rc = os.path.abspath('../matepath/src/matepath.rc')
 
-activeLocaleList = ['i18n', 'en', 'de', 'fr', 'it', 'ja', 'ko', 'ru', 'zh-Hans', 'zh-Hant']
+activeLocaleList = ['i18n', 'en', 'de', 'fr', 'it', 'ja', 'ko', 'pl', 'ru', 'zh-Hans', 'zh-Hant']
 defaultConfig = {
 	'NP2_ENABLE_CUSTOMIZE_TOOLBAR_LABELS': 0,
 	'NP2_ENABLE_HIDPI_IMAGE_RESOURCE': 1,
@@ -137,6 +137,8 @@ def prepare_build_environment():
 		'../doc/Notepad4 DarkTheme.ini',
 		'../matepath/doc/matepath.ini']:
 		target = os.path.join(zipDir, os.path.basename(path))
+		if target.endswith('.ini'):
+			target = target + '-default'
 		if not os.path.exists(target):
 			src = os.path.join(buildFolder, path)
 			shutil.copyfile(src, target)
@@ -253,7 +255,7 @@ def build_all_release_artifact():
 	endTime = time.perf_counter()
 	print('total build time:', format_duration(endTime - startTime))
 
-# https://cli.github.com/
+# https://cli.github.com/manual/
 # gh auth login
 # gh release list -L 2
 # gh release upload <tag> <files>

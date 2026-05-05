@@ -202,7 +202,10 @@ class LexInterface {
 protected:
 	Document *pdoc;
 	LexerInstance instance;
-	bool performingStyle;	///< Prevent reentrance
+	bool performingStyle = false;	///< Prevent reentrance
+	bool enableUrlHighlight = false;
+	int lexerLanguage = 0;
+	uint32_t urlIgnoreStyle[8];
 public:
 	explicit LexInterface(Document *pdoc_) noexcept;
 	LexInterface(const LexInterface &) = delete;
@@ -413,6 +416,9 @@ public:
 	bool IsDBCSTrailByteNoExcept(unsigned char ch) const noexcept {
 		return dbcsCharClass->IsTrailByte(ch);
 	}
+	const DBCSCharClassify *GetDBCSCharClass() const noexcept {
+		return dbcsCharClass.get();
+	}
 	bool IsDBCSDualByteAt(Sci::Position pos) const noexcept;
 	int DBCSDrawBytes(const char *text, size_t length) const noexcept;
 	static size_t DiscardLastCombinedCharacter(const char *text, size_t lengthSegment, size_t lenBytes) noexcept;
@@ -509,7 +515,7 @@ public:
 		return cb.EditionNextDelete(pos);
 	}
 
-	const char * SCI_METHOD BufferPointer() override {
+	const char * SCI_METHOD BufferPointer() noexcept override {
 		return cb.BufferPointer();
 	}
 	const char *RangePointer(Sci::Position position, Sci::Position rangeLength) noexcept {
@@ -616,7 +622,7 @@ public:
 	bool IsWordEndAt(Sci::Position pos) const noexcept;
 	bool IsWordAt(Sci::Position start, Sci::Position end) const noexcept;
 
-	bool MatchesWordOptions(bool word, bool wordStart, Sci::Position pos, Sci::Position length) const noexcept;
+	bool MatchesWordOptions(Scintilla::FindOption flags, Sci::Position pos, Sci::Position length) const noexcept;
 	bool HasCaseFolder() const noexcept;
 	void SetCaseFolder(std::unique_ptr<CaseFolder> pcf_) noexcept;
 	Sci::Position FindText(Sci::Position minPos, Sci::Position maxPos, const char *search, Scintilla::FindOption flags, Sci::Position *length);
@@ -646,6 +652,8 @@ public:
 	void EnsureStyledTo(Sci::Position pos);
 	void StyleToAdjustingLineDuration(Sci::Position pos);
 	void LexerChanged(bool hasStyles_);
+	bool EnableUrlHighlight() const noexcept;
+	void HighlightUrl(Sci_PositionU startPos, Sci_Position lengthDoc, const uint32_t (&urlIgnoreStyle)[8]);
 	int GetStyleClock() const noexcept {
 		return styleClock;
 	}

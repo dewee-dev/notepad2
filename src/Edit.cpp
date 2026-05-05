@@ -47,10 +47,6 @@ extern DWORD dwLastIOError;
 extern HWND hDlgFindReplace;
 extern bool bReplaceInitialized;
 
-extern int xFindReplaceDlg;
-extern int yFindReplaceDlg;
-extern int cxFindReplaceDlg;
-
 extern int iDefaultEOLMode;
 extern bool bFixLineEndings;
 extern bool bAutoStripBlanks;
@@ -66,6 +62,7 @@ extern int iCurrentEncoding;
 
 extern MRUList mruFind;
 extern MRUList mruReplace;
+extern CallTipInfo callTipInfo;
 
 static LPWSTR wchPrefixSelection;
 static LPWSTR wchAppendSelection;
@@ -73,30 +70,29 @@ static LPWSTR wchPrefixLines;
 static LPWSTR wchAppendLines;
 
 // see TransliterateText()
-#if defined(_MSC_VER) && (_WIN32_WINNT >= _WIN32_WINNT_WIN7)
-#define NP2_DYNAMIC_LOAD_ELSCORE_DLL	1
-#else
-#define NP2_DYNAMIC_LOAD_ELSCORE_DLL	1
-#endif
-#if NP2_DYNAMIC_LOAD_ELSCORE_DLL
 static HMODULE hELSCoreDLL = nullptr;
-#else
-#pragma comment(lib, "elscore.lib")
-#endif
-
+// see EditShowCharacterInfo()
+static HMODULE hICUDLL = nullptr;
+// see EditCalculateExpr()
+HMODULE hPropSysDLL = nullptr;
+// reduce global CRT initializer and binary size,
+// static linked wcsftime() may behaviors different from system one.
 #define NP2_DYNAMIC_LOAD_wcsftime	1
 #if NP2_DYNAMIC_LOAD_wcsftime
 static HMODULE hCrtDLL = nullptr;
 
 using wcsftimeSig = size_t (__cdecl *)(wchar_t *str, size_t count, const wchar_t *format, const struct tm *time);
+NP2_noinline
 wcsftimeSig GetFunctionPointer_wcsftime() noexcept {
-	if (hCrtDLL == nullptr) {
-		hCrtDLL = LoadLibraryExW(L"ucrtbase.dll", nullptr, kSystemLibraryLoadFlags);
-		if (hCrtDLL == nullptr) {
-			hCrtDLL = LoadLibraryExW(L"msvcrt.dll", nullptr, kSystemLibraryLoadFlags);
+	HMODULE hDLL = hCrtDLL;
+	if (hDLL == nullptr) {
+		hDLL = LoadLibraryExW(L"ucrtbase.dll", nullptr, kSystemLibraryLoadFlags);
+		if (hDLL == nullptr) {
+			hDLL = LoadLibraryExW(L"msvcrt.dll", nullptr, kSystemLibraryLoadFlags);
 		}
+		hCrtDLL = hDLL;
 	}
-	return DLLFunction<wcsftimeSig>(hCrtDLL, "wcsftime");
+	return DLLFunction<wcsftimeSig>(hDLL, "wcsftime");
 }
 #endif
 
@@ -105,11 +101,15 @@ void Edit_ReleaseResources() noexcept {
 	NP2HeapFree(wchAppendSelection);
 	NP2HeapFree(wchPrefixLines);
 	NP2HeapFree(wchAppendLines);
-#if NP2_DYNAMIC_LOAD_ELSCORE_DLL
 	if (hELSCoreDLL != nullptr) {
 		FreeLibrary(hELSCoreDLL);
 	}
-#endif
+	if (hICUDLL != nullptr) {
+		FreeLibrary(hICUDLL);
+	}
+	if (hPropSysDLL != nullptr) {
+		FreeLibrary(hPropSysDLL);
+	}
 #if NP2_DYNAMIC_LOAD_wcsftime
 	if (hCrtDLL) {
 		FreeLibrary(hCrtDLL);
@@ -1219,6 +1219,13 @@ bool EditSaveFile(HWND hwnd, LPCWSTR pszFile, int saveFlag, EditFileIOStatus &st
 		return false;
 	}
 
+	FILE_BASIC_INFO timestamp;
+	if (saveFlag & FileSaveFlag_OriginalTimestamp) {
+		if (!GetFileInformationByHandleEx(hFile, FileBasicInfo, &timestamp, sizeof(timestamp))) {
+			saveFlag &= ~FileSaveFlag_OriginalTimestamp;
+		}
+	}
+
 	if (!(saveFlag & FileSaveFlag_EndSession) && !bReadOnlyMode) {
 		// ensure consistent line endings
 		if (bFixLineEndings) {
@@ -1231,37 +1238,20 @@ bool EditSaveFile(HWND hwnd, LPCWSTR pszFile, int saveFlag, EditFileIOStatus &st
 		}
 	}
 
-	BOOL bWriteSuccess;
 	// get text
 	DWORD cbData = static_cast<DWORD>(SciCall_GetLength());
 	char *lpData = nullptr;
-	int iEncoding = status.iEncoding;
+	const int iEncoding = status.iEncoding;
 	UINT uFlags = mEncoding[iEncoding].uFlags;
 
-	if (cbData == 0) {
-		bWriteSuccess = SetEndOfFile(hFile);
-		// write encoding BOM
-		DWORD dwBytesWritten;
-		if (uFlags & NCP_UNICODE_BOM) {
-			if (uFlags & NCP_UNICODE_REVERSE) {
-				bWriteSuccess = WriteFile(hFile, "\xFE\xFF", 2, &dwBytesWritten, nullptr);
-			} else {
-				bWriteSuccess = WriteFile(hFile, "\xFF\xFE", 2, &dwBytesWritten, nullptr);
-			}
-		} else if (uFlags & NCP_UTF8_SIGN) {
-			bWriteSuccess = WriteFile(hFile, "\xEF\xBB\xBF", 3, &dwBytesWritten, nullptr);
-		}
-		dwLastIOError = GetLastError();
-	} else {
+	// get content and convert encoding
+	if (cbData != 0) {
 		if (cbData >= MAX_NON_UTF8_SIZE) {
 			// save as UTF-8 or ANSI
 			if (!(uFlags & (NCP_DEFAULT | NCP_UTF8))) {
-				if (uFlags & NCP_UNICODE_BOM) {
-					iEncoding = CPI_UTF8SIGN;
-				} else {
-					iEncoding = CPI_UTF8;
-				}
-				uFlags = mEncoding[iEncoding].uFlags;
+				// iEncoding = (uFlags & NCP_UNICODE_BOM) ? CPI_UTF8SIGN : CPI_UTF8;
+				// uFlags = mEncoding[iEncoding].uFlags;
+				uFlags = (uFlags & NCP_UNICODE_BOM) ? NCP_UTF8_SIGN : NCP_UTF8;
 			}
 		}
 
@@ -1284,39 +1274,19 @@ bool EditSaveFile(HWND hwnd, LPCWSTR pszFile, int saveFlag, EditFileIOStatus &st
 		}
 #endif
 
-		DWORD dwBytesWritten;
-		if (uFlags & NCP_UNICODE) {
-			SetEndOfFile(hFile);
-
+		if (uFlags & (NCP_UTF8 | NCP_DEFAULT)) {
+			// no encoding conversion for UTF-8 or ANSI
+		} else if (uFlags & NCP_UNICODE) {
 			LPWSTR lpDataWide = static_cast<LPWSTR>(NP2HeapAlloc(cbData * sizeof(WCHAR) + 16));
 			const int cbDataWide = MultiByteToWideChar(CP_UTF8, 0, lpData, cbData, lpDataWide, static_cast<int>(NP2HeapSize(lpDataWide) / sizeof(WCHAR)));
-
-			if (uFlags & NCP_UNICODE_BOM) {
-				if (uFlags & NCP_UNICODE_REVERSE) {
-					WriteFile(hFile, "\xFE\xFF", 2, &dwBytesWritten, nullptr);
-				} else {
-					WriteFile(hFile, "\xFF\xFE", 2, &dwBytesWritten, nullptr);
-				}
-			}
+			NP2HeapFree(lpData);
+			lpData = reinterpret_cast<char *>(lpDataWide);
+			cbData = cbDataWide * sizeof(WCHAR);
 
 			if (uFlags & NCP_UNICODE_REVERSE) {
-				_swab(reinterpret_cast<char *>(lpDataWide), reinterpret_cast<char *>(lpDataWide), static_cast<int>(cbDataWide * sizeof(WCHAR)));
+				_swab(lpData, lpData, cbData);
 			}
-
-			bWriteSuccess = WriteFile(hFile, lpDataWide, cbDataWide * sizeof(WCHAR), &dwBytesWritten, nullptr);
-			dwLastIOError = GetLastError();
-
-			NP2HeapFree(lpDataWide);
-		} else if (uFlags & NCP_UTF8) {
-			SetEndOfFile(hFile);
-
-			if (uFlags & NCP_UTF8_SIGN) {
-				WriteFile(hFile, "\xEF\xBB\xBF", 3, &dwBytesWritten, nullptr);
-			}
-
-			bWriteSuccess = WriteFile(hFile, lpData, cbData, &dwBytesWritten, nullptr);
-			dwLastIOError = GetLastError();
-		} else if (uFlags & (NCP_8BIT | NCP_7BIT)) {
+		} else { // NCP_8BIT, NCP_7BIT
 			BOOL bCancelDataLoss = FALSE;
 			const UINT uCodePage = mEncoding[iEncoding].uCodePage;
 
@@ -1336,31 +1306,48 @@ bool EditSaveFile(HWND hwnd, LPCWSTR pszFile, int saveFlag, EditFileIOStatus &st
 			}
 			NP2HeapFree(lpDataWide);
 
-			if (!bCancelDataLoss || InfoBoxWarn(MB_OKCANCEL, L"MsgConv3", IDS_ERR_UNICODE2) == IDOK) {
-				SetEndOfFile(hFile);
-				bWriteSuccess = WriteFile(hFile, lpData, cbData, &dwBytesWritten, nullptr);
-				dwLastIOError = GetLastError();
-			} else {
-				bWriteSuccess = FALSE;
+			if (bCancelDataLoss && InfoBoxWarn(MB_OKCANCEL, L"MsgConv3", IDS_ERR_UNICODE2) != IDOK) {
 				status.bCancelDataLoss = true;
+				CloseHandle(hFile);
+				NP2HeapFree(lpData);
+				return false;
 			}
-		} else {
-			SetEndOfFile(hFile);
+		}
+	}
+
+	// write content
+	{
+		BOOL bWriteSuccess = SetEndOfFile(hFile);
+		DWORD dwBytesWritten;
+		// write encoding BOM
+		DWORD bom;
+		DWORD length = 0;
+		if (uFlags & NCP_UNICODE_BOM) {
+			bom = (uFlags & NCP_UNICODE_REVERSE) ? BOM_UTF16BE : BOM_UTF16LE;
+			length = 2;
+		} else if (uFlags & NCP_UTF8_SIGN) {
+			bom = BOM_UTF8;
+			length = 3;
+		}
+		if (length != 0) {
+			bWriteSuccess = WriteFile(hFile, &bom, length, &dwBytesWritten, nullptr);
+		}
+		dwLastIOError = GetLastError();
+		if (lpData != nullptr) {
 			bWriteSuccess = WriteFile(hFile, lpData, cbData, &dwBytesWritten, nullptr);
 			dwLastIOError = GetLastError();
+			NP2HeapFree(lpData);
 		}
-	}
-
-	if (lpData != nullptr) {
-		NP2HeapFree(lpData);
-	}
-
-	CloseHandle(hFile);
-	if (bWriteSuccess) {
-		if (!(saveFlag & FileSaveFlag_SaveCopy)) {
-			SciCall_SetSavePoint();
+		if (saveFlag & FileSaveFlag_OriginalTimestamp) {
+			SetFileInformationByHandle(hFile, FileBasicInfo, &timestamp, sizeof(timestamp));
 		}
-		return true;
+		CloseHandle(hFile);
+		if (bWriteSuccess) {
+			if (!(saveFlag & FileSaveFlag_SaveCopy)) {
+				SciCall_SetSavePoint();
+			}
+			return true;
+		}
 	}
 
 	return false;
@@ -1440,13 +1427,12 @@ const GUID WIN10_ELS_GUID_TRANSLITERATION_HANGUL_DECOMPOSITION =
 	{ 0x4BA2A721, 0xE43D, 0x41b7, { 0xB3, 0x30, 0x53, 0x6A, 0xE1, 0xE4, 0x88, 0x63 } };
 
 int TransliterateText(const GUID *pGuid, LPCWSTR pszTextW, int cchTextW, LPWSTR &pszMappedW) noexcept {
-#if NP2_DYNAMIC_LOAD_ELSCORE_DLL
 using MappingGetServicesSig = HRESULT (WINAPI *)(PMAPPING_ENUM_OPTIONS pOptions, PMAPPING_SERVICE_INFO *prgServices, DWORD *pdwServicesCount);
 using MappingFreeServicesSig = HRESULT (WINAPI *)(PMAPPING_SERVICE_INFO pServiceInfo);
 using MappingRecognizeTextSig = HRESULT (WINAPI *)(PMAPPING_SERVICE_INFO pServiceInfo, LPCWSTR pszText, DWORD dwLength, DWORD dwIndex, PMAPPING_OPTIONS pOptions, PMAPPING_PROPERTY_BAG pbag);
 using MappingFreePropertyBagSig = HRESULT (WINAPI *)(PMAPPING_PROPERTY_BAG pBag);
 
-	static int triedLoadingELSCore = 0;
+	static uint8_t triedLoadingELSCore = 0;
 	static MappingGetServicesSig pfnMappingGetServices;
 	static MappingFreeServicesSig pfnMappingFreeServices;
 	static MappingRecognizeTextSig pfnMappingRecognizeText;
@@ -1454,24 +1440,23 @@ using MappingFreePropertyBagSig = HRESULT (WINAPI *)(PMAPPING_PROPERTY_BAG pBag)
 
 	if (triedLoadingELSCore == 0) {
 		triedLoadingELSCore = 1;
-		hELSCoreDLL = LoadLibraryExW(L"elscore.dll", nullptr, kSystemLibraryLoadFlags);
-		if (hELSCoreDLL != nullptr) {
-			pfnMappingGetServices = DLLFunction<MappingGetServicesSig>(hELSCoreDLL, "MappingGetServices");
-			pfnMappingFreeServices = DLLFunction<MappingFreeServicesSig>(hELSCoreDLL, "MappingFreeServices");
-			pfnMappingRecognizeText = DLLFunction<MappingRecognizeTextSig>(hELSCoreDLL, "MappingRecognizeText");
-			pfnMappingFreePropertyBag = DLLFunction<MappingFreePropertyBagSig>(hELSCoreDLL, "MappingFreePropertyBag");
+		HMODULE hDLL = LoadLibraryExW(L"elscore.dll", nullptr, kSystemLibraryLoadFlags);
+		if (hDLL != nullptr) {
+			pfnMappingGetServices = DLLFunction<MappingGetServicesSig>(hDLL, "MappingGetServices");
+			pfnMappingFreeServices = DLLFunction<MappingFreeServicesSig>(hDLL, "MappingFreeServices");
+			pfnMappingRecognizeText = DLLFunction<MappingRecognizeTextSig>(hDLL, "MappingRecognizeText");
+			pfnMappingFreePropertyBag = DLLFunction<MappingFreePropertyBagSig>(hDLL, "MappingFreePropertyBag");
 			if (pfnMappingGetServices == nullptr || pfnMappingFreeServices == nullptr || pfnMappingRecognizeText == nullptr || pfnMappingFreePropertyBag == nullptr) {
-				FreeLibrary(hELSCoreDLL);
-				hELSCoreDLL = nullptr;
+				FreeLibrary(hDLL);
 				return 0;
 			}
+			hELSCoreDLL = hDLL;
 			triedLoadingELSCore = 2;
 		}
 	}
 	if (triedLoadingELSCore != 2) {
 		return 0;
 	}
-#endif
 
 	MAPPING_ENUM_OPTIONS enumOptions;
 	PMAPPING_SERVICE_INFO prgServices = nullptr;
@@ -1481,21 +1466,13 @@ using MappingFreePropertyBagSig = HRESULT (WINAPI *)(PMAPPING_PROPERTY_BAG pBag)
 	enumOptions.Size = sizeof(MAPPING_ENUM_OPTIONS);
 	enumOptions.pGuid = const_cast<GUID *>(pGuid);
 
-#if NP2_DYNAMIC_LOAD_ELSCORE_DLL
 	HRESULT hr = pfnMappingGetServices(&enumOptions, &prgServices, &dwServicesCount);
-#else
-	HRESULT hr = MappingGetServices(&enumOptions, &prgServices, &dwServicesCount);
-#endif
 	dwServicesCount = 0;
 	if (SUCCEEDED(hr)) {
 		MAPPING_PROPERTY_BAG bag;
 		memset(&bag, 0, sizeof(MAPPING_PROPERTY_BAG));
 		bag.Size = sizeof (MAPPING_PROPERTY_BAG);
-#if NP2_DYNAMIC_LOAD_ELSCORE_DLL
 		hr = pfnMappingRecognizeText(prgServices, pszTextW, cchTextW, 0, nullptr, &bag);
-#else
-		hr = MappingRecognizeText(prgServices, pszTextW, cchTextW, 0, nullptr, &bag);
-#endif
 		if (SUCCEEDED(hr)) {
 			const DWORD dwDataSize = bag.prgResultRanges[0].dwDataSize;
 			dwServicesCount = dwDataSize/sizeof(WCHAR);
@@ -1505,36 +1482,20 @@ using MappingFreePropertyBagSig = HRESULT (WINAPI *)(PMAPPING_PROPERTY_BAG pBag)
 				memcpy(pszConvW, pszTextW, dwDataSize);
 				pszMappedW = pszConvW;
 			}
-#if NP2_DYNAMIC_LOAD_ELSCORE_DLL
 			pfnMappingFreePropertyBag(&bag);
-#else
-			MappingFreePropertyBag(&bag);
-#endif
 		}
-#if NP2_DYNAMIC_LOAD_ELSCORE_DLL
 		pfnMappingFreeServices(prgServices);
-#else
-		MappingFreeServices(prgServices);
-#endif
 	}
 
 	return dwServicesCount;
 }
 
 int StringMapCase(LPCWSTR pszTextW, int cchTextW, DWORD flags, LPWSTR &pszMappedW) noexcept {
-#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 	int charsConverted = LCMapStringEx(LOCALE_NAME_USER_DEFAULT, flags, pszTextW, cchTextW, nullptr, 0, nullptr, nullptr, 0);
 	if (charsConverted) {
 		pszMappedW = static_cast<LPWSTR>(NP2HeapAlloc((charsConverted + 1)*sizeof(WCHAR)));
 		charsConverted = LCMapStringEx(LOCALE_NAME_USER_DEFAULT, flags, pszTextW, cchTextW, pszMappedW, charsConverted, nullptr, nullptr, 0);
 	}
-#else
-	int charsConverted = LCMapString(LOCALE_USER_DEFAULT, flags, pszTextW, cchTextW, nullptr, 0);
-	if (charsConverted) {
-		pszMappedW = static_cast<LPWSTR>(NP2HeapAlloc((charsConverted + 1)*sizeof(WCHAR)));
-		charsConverted = LCMapString(LOCALE_USER_DEFAULT, flags, pszTextW, cchTextW, pszMappedW, charsConverted);
-	}
-#endif
 	return charsConverted;
 }
 
@@ -1579,18 +1540,9 @@ constexpr bool IsSentenceTerminator(wchar_t ch) noexcept {
 
 //=============================================================================
 //
-// EditMapTextCase()
+// EditMapTextCase(), used by ScintillaWin::CaseMapString()
 //
-void EditMapTextCase(int menu) noexcept {
-	const Sci_Position iSelCount = SciCall_GetSelTextLength();
-	if (iSelCount == 0) {
-		return;
-	}
-	if (SciCall_IsRectangularSelection()) {
-		NotifyRectangularSelection();
-		return;
-	}
-
+char *EditMapTextCase(int menu, const char *pszText, size_t &iSelCount, UINT cpEdit) noexcept {
 	DWORD flags = 0;
 	const GUID *pGuid = nullptr;
 	switch (menu) {
@@ -1633,21 +1585,13 @@ void EditMapTextCase(int menu) noexcept {
 	case IDM_EDIT_MAP_HANGUL_DECOMPOSITION:
 		pGuid = &WIN10_ELS_GUID_TRANSLITERATION_HANGUL_DECOMPOSITION;
 		break;
-	case IDM_EDIT_MAP_HANJA_HANGUL:
-		// implemented in ScintillaWin::SelectionToHangul().
-		SendMessage(hwndEdit, WM_IME_KEYDOWN, VK_HANJA, 0);
-		return;
 	case IDM_EDIT_INVERTCASE:
 	default:
 		break;
 	}
 
-	char *pszText = static_cast<char *>(NP2HeapAlloc(iSelCount*kMaxMultiByteCount + 1));
 	LPWSTR pszTextW = static_cast<LPWSTR>(NP2HeapAlloc((iSelCount + 1) * sizeof(WCHAR)));
-
-	SciCall_GetSelText(pszText);
-	const UINT cpEdit = SciCall_GetCodePage();
-	int cchTextW = MultiByteToWideChar(cpEdit, 0, pszText, static_cast<int>(iSelCount), pszTextW, static_cast<int>(NP2HeapSize(pszTextW) / sizeof(WCHAR)));
+	int cchTextW = MultiByteToWideChar(cpEdit, 0, pszText, static_cast<int>(iSelCount), pszTextW, static_cast<int>(iSelCount + 1));
 
 	bool bChanged = false;
 	if (flags != 0 || pGuid != nullptr) {
@@ -1706,10 +1650,6 @@ void EditMapTextCase(int menu) noexcept {
 			NP2HeapFree(pszTextW);
 			pszTextW = pszMappedW;
 			cchTextW = charsConverted;
-			if (charsConverted > iSelCount) {
-				NP2HeapFree(pszText);
-				pszText = static_cast<char *>(NP2HeapAlloc(charsConverted*kMaxMultiByteCount + 1));
-			}
 		}
 	} else {
 		// invert case
@@ -1725,13 +1665,16 @@ void EditMapTextCase(int menu) noexcept {
 		}
 	}
 
+	char *pszOut = nullptr;
 	if (bChanged) {
-		const int cchText = WideCharToMultiByte(cpEdit, 0, pszTextW, cchTextW, pszText, static_cast<int>(NP2HeapSize(pszText)), nullptr, nullptr);
-		EditReplaceMainSelection(cchText, pszText);
+		int cchText = cchTextW*kMaxMultiByteCount + 1;
+		pszOut = static_cast<char *>(NP2HeapAlloc(cchText));
+		cchText = WideCharToMultiByte(cpEdit, 0, pszTextW, cchTextW, pszOut, cchText, nullptr, nullptr);
+		iSelCount = cchText;
 	}
 
-	NP2HeapFree(pszText);
 	NP2HeapFree(pszTextW);
+	return pszOut;
 }
 
 #ifndef URL_ESCAPE_AS_UTF8		// NTDDI_VERSION >= NTDDI_WIN7
@@ -1874,18 +1817,25 @@ void EditEscapeCChars(HWND hwnd) noexcept {
 	EDITFINDREPLACE * const efr = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
 	efr->hwnd = hwnd;
 	SciCall_BeginBatchUpdate();
+	const int rid = pLexCurrent->rid;
 
-	strcpy(efr->szFind, "\\");
-	strcpy(efr->szReplace, "\\\\");
+	StrCpyEx(efr->szFind, "\\");
+	StrCpyEx(efr->szReplace, "\\\\");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "\"");
-	strcpy(efr->szReplace, "\\\"");
+	StrCpyEx(efr->szFind, "\"");
+	if (rid == NP2LEX_RESOURCESCRIPT) {
+		StrCpyEx(efr->szReplace, "\"\"");
+	} else {
+		StrCpyEx(efr->szReplace, "\\\"");
+	}
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "\'");
-	strcpy(efr->szReplace, "\\\'");
-	EditReplaceAllInSelection(hwnd, efr);
+	if (rid != NP2LEX_RESOURCESCRIPT) {
+		StrCpyEx(efr->szFind, "\'");
+		StrCpyEx(efr->szReplace, "\\\'");
+		EditReplaceAllInSelection(hwnd, efr);
+	}
 
 	NP2HeapFree(efr);
 	SciCall_EndBatchUpdate();
@@ -1907,18 +1857,25 @@ void EditUnescapeCChars(HWND hwnd) noexcept {
 	EDITFINDREPLACE * const efr = static_cast<EDITFINDREPLACE *>(NP2HeapAlloc(sizeof(EDITFINDREPLACE)));
 	efr->hwnd = hwnd;
 	SciCall_BeginBatchUpdate();
+	const int rid = pLexCurrent->rid;
 
-	strcpy(efr->szFind, "\\\\");
-	strcpy(efr->szReplace, "\\");
+	StrCpyEx(efr->szFind, "\\\\");
+	StrCpyEx(efr->szReplace, "\\");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "\\\"");
-	strcpy(efr->szReplace, "\"");
+	if (rid == NP2LEX_RESOURCESCRIPT) {
+		StrCpyEx(efr->szFind, "\"\"");
+	} else {
+		StrCpyEx(efr->szFind, "\\\"");
+	}
+	StrCpyEx(efr->szReplace, "\"");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "\\\'");
-	strcpy(efr->szReplace, "\'");
-	EditReplaceAllInSelection(hwnd, efr);
+	if (rid != NP2LEX_RESOURCESCRIPT) {
+		StrCpyEx(efr->szFind, "\\\'");
+		StrCpyEx(efr->szReplace, "\'");
+		EditReplaceAllInSelection(hwnd, efr);
+	}
 
 	NP2HeapFree(efr);
 	SciCall_EndBatchUpdate();
@@ -1950,33 +1907,33 @@ void EditEscapeXHTMLChars(HWND hwnd) noexcept {
 	efr->hwnd = hwnd;
 	SciCall_BeginBatchUpdate();
 
-	strcpy(efr->szFind, "&");
-	strcpy(efr->szReplace, "&amp;");
+	StrCpyEx(efr->szFind, "&");
+	StrCpyEx(efr->szReplace, "&amp;");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "\"");
-	strcpy(efr->szReplace, "&quot;");
+	StrCpyEx(efr->szFind, "\"");
+	StrCpyEx(efr->szReplace, "&quot;");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "\'");
-	strcpy(efr->szReplace, "&apos;");
+	StrCpyEx(efr->szFind, "\'");
+	StrCpyEx(efr->szReplace, "&apos;");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "<");
-	strcpy(efr->szReplace, "&lt;");
+	StrCpyEx(efr->szFind, "<");
+	StrCpyEx(efr->szReplace, "&lt;");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, ">");
-	strcpy(efr->szReplace, "&gt;");
+	StrCpyEx(efr->szFind, ">");
+	StrCpyEx(efr->szReplace, "&gt;");
 	EditReplaceAllInSelection(hwnd, efr);
 
 	if (pLexCurrent->iLexer != SCLEX_XML) {
-		strcpy(efr->szFind, " ");
-		strcpy(efr->szReplace, "&nbsp;");
+		StrCpyEx(efr->szFind, " ");
+		StrCpyEx(efr->szReplace, "&nbsp;");
 		EditReplaceAllInSelection(hwnd, efr);
 
-		strcpy(efr->szFind, "\t");
-		strcpy(efr->szReplace, "&emsp;");
+		StrCpyEx(efr->szFind, "\t");
+		StrCpyEx(efr->szReplace, "&emsp;");
 		EditReplaceAllInSelection(hwnd, efr);
 	}
 
@@ -2001,32 +1958,32 @@ void EditUnescapeXHTMLChars(HWND hwnd) noexcept {
 	efr->hwnd = hwnd;
 	SciCall_BeginBatchUpdate();
 
-	strcpy(efr->szFind, "&quot;");
-	strcpy(efr->szReplace, "\"");
+	StrCpyEx(efr->szFind, "&quot;");
+	StrCpyEx(efr->szReplace, "\"");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "&apos;");
-	strcpy(efr->szReplace, "\'");
+	StrCpyEx(efr->szFind, "&apos;");
+	StrCpyEx(efr->szReplace, "\'");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "&lt;");
-	strcpy(efr->szReplace, "<");
+	StrCpyEx(efr->szFind, "&lt;");
+	StrCpyEx(efr->szReplace, "<");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "&gt;");
-	strcpy(efr->szReplace, ">");
+	StrCpyEx(efr->szFind, "&gt;");
+	StrCpyEx(efr->szReplace, ">");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "&nbsp;");
-	strcpy(efr->szReplace, " ");
+	StrCpyEx(efr->szFind, "&nbsp;");
+	StrCpyEx(efr->szReplace, " ");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "&amp;");
-	strcpy(efr->szReplace, "&");
+	StrCpyEx(efr->szFind, "&amp;");
+	StrCpyEx(efr->szReplace, "&");
 	EditReplaceAllInSelection(hwnd, efr);
 
-	strcpy(efr->szFind, "&emsp;");
-	strcpy(efr->szReplace, "\t");
+	StrCpyEx(efr->szFind, "&emsp;");
+	StrCpyEx(efr->szReplace, "\t");
 	EditReplaceAllInSelection(hwnd, efr);
 
 	NP2HeapFree(efr);
@@ -2049,7 +2006,7 @@ void EditUnescapeXHTMLChars(HWND hwnd) noexcept {
 #define BMP_UNICODE_HEX_DIGIT	4
 #define MAX_UNICODE_HEX_DIGIT	8
 
-void EditChar2Hex() noexcept {
+void EditCharacterToHex() noexcept {
 	Sci_Position count = SciCall_GetSelTextLength();
 	if (count == 0) {
 		return;
@@ -2068,7 +2025,7 @@ void EditChar2Hex() noexcept {
 	int outLen = 0;
 	if (ch[0] == '\0') {
 		outLen = 4;
-		strcpy(ch, "\\x00");
+		StrCpyEx(ch, "\\x00");
 	} else {
 		const UINT cpEdit = SciCall_GetCodePage();
 		count = MultiByteToWideChar(cpEdit, 0, ch, -1, wch, static_cast<int>(count)) - 1; // '\0'
@@ -2082,7 +2039,7 @@ void EditChar2Hex() noexcept {
 		}
 		if (count == 2 && IS_SURROGATE_PAIR(wch[0], wch[1])) {
 			const UINT value = UTF16_TO_UTF32(wch[0], wch[1]);
-			outLen += sprintf(ch + outLen, " U+%X", value);
+			outLen += sprintf(ch + outLen, " U+%06X", value);
 		}
 	}
 
@@ -2095,7 +2052,7 @@ void EditChar2Hex() noexcept {
 //
 // EditHex2Char()
 //
-void EditHex2Char() noexcept {
+void EditHexToCharacter() noexcept {
 	Sci_Position count = SciCall_GetSelTextLength();
 	if (count == 0) {
 		return;
@@ -2132,7 +2089,7 @@ void EditHex2Char() noexcept {
 				value = (value << 4) | hex;
 				p++;
 			}
-			if (value != 0 && value <= MAX_UNICODE) {
+			if (ucc > 1 && value <= MAX_UNICODE) {
 				changed = true;
 				// see UTF16FromUTF32Character() in UniConversion.h
 				if (value < SUPPLEMENTAL_PLANE_FIRST) {
@@ -2188,6 +2145,114 @@ void EditShowHex() noexcept {
 	SciCall_SetSel(iSelEnd, iSelEnd + (t - cch));
 	NP2HeapFree(ch);
 	NP2HeapFree(cch);
+}
+
+void EditShowCharacterInfo() noexcept {
+	const Sci_Position position = SciCall_GetSelectionStart();
+	unsigned character = SciCall_GetCharacterAt(position);
+	char bytes[4]{};
+	WCHAR wchBuf[256];
+	memset(wchBuf, 0, sizeof(int));
+	unsigned count = 1;
+	if (character <= 0x7f) {
+		bytes[0] = static_cast<char>(character);
+		wchBuf[0] = static_cast<wchar_t>(character);
+	} else {
+		const UINT cpEdit = SciCall_GetCodePage();
+		if (cpEdit == SC_CP_UTF8) {
+			if (character < SUPPLEMENTAL_PLANE_FIRST) {
+				wchBuf[0] = static_cast<wchar_t>(character);
+			} else {
+				count = 2;
+				wchBuf[0] = static_cast<WCHAR>(((character - SUPPLEMENTAL_PLANE_FIRST) >> 10) + SURROGATE_LEAD_FIRST);
+				wchBuf[1] = (character & 0x3ff) + SURROGATE_TRAIL_FIRST;
+			}
+		} else {
+			if (character <= 0xff) {
+				bytes[0] = static_cast<char>(character);
+			} else {
+				count = 2;
+				const uint16_t dbcs = bswap16(static_cast<uint16_t>(character));
+				memcpy(bytes, &dbcs, 2);
+			}
+			count = MultiByteToWideChar(cpEdit, 0, bytes, count, wchBuf, COUNTOF(wchBuf));
+			if (IS_SURROGATE_PAIR(wchBuf[0], wchBuf[1])) {
+				character = UTF16_TO_UTF32(wchBuf[0], wchBuf[1]);
+			} else {
+				character = wchBuf[0];
+			}
+		}
+		count = WideCharToMultiByte(CP_UTF8, 0, wchBuf, count, bytes, COUNTOF(bytes), nullptr, nullptr);
+	}
+
+	char buffer[256];
+	unsigned length = 0;
+	memset(buffer, 0, sizeof(int));
+	length = sprintf(buffer, "Unicode: U+%0*X\n", ((character < SUPPLEMENTAL_PLANE_FIRST) ? 4 : 6), character);
+	StrCpyEx(buffer + length, "UTF-16:");
+	length += CSTRLEN("UTF-16:");
+	length += sprintf(buffer + length, " %04X", wchBuf[0]);
+	if (character >= SUPPLEMENTAL_PLANE_FIRST) {
+		length += sprintf(buffer + length, " %04X", wchBuf[1]);
+	}
+	StrCpyEx(buffer + length, "\nUTF-8:");
+	length += CSTRLEN("\nUTF-8:");
+	for (unsigned i = 0; i < count; i++) {
+		const uint8_t ch = bytes[i];
+		buffer[length] = ' ';
+		buffer[length + 1] = "0123456789ABCDEF"[ch >> 4];
+		buffer[length + 2] = "0123456789ABCDEF"[ch & 15];
+		length += 3;
+	}
+	length += sprintf(buffer + length, "\nHTML: &#%u;", character);
+
+// see icu.h / uchar.h, https://learn.microsoft.com/en-us/windows/win32/intl/international-components-for-unicode--icu-
+using u_charNameSig = int32_t (__cdecl *)(uint32_t code, int nameChoice, char *buffer, int32_t bufferLength, int *pErrorCode);
+using u_getIntPropertyValueSig = int32_t (__cdecl *)(uint32_t code, int which);
+using u_getPropertyValueNameSig = const char * (__cdecl *)(int property, int32_t value, int nameChoice);
+	constexpr int U_EXTENDED_CHAR_NAME = 2;
+	constexpr int U_SHORT_PROPERTY_NAME = 0;
+	constexpr int U_LONG_PROPERTY_NAME = 1;
+	constexpr int UCHAR_GENERAL_CATEGORY = 0x1005;
+
+	static uint8_t triedLoadingICU = 0;
+	static u_charNameSig pfn_charName;
+	static u_getIntPropertyValueSig pfn_getIntPropertyValue;
+	static u_getPropertyValueNameSig pfn_getPropertyValueName;
+	if (triedLoadingICU == 0) {
+		triedLoadingICU = 1;
+		HMODULE hDLL = LoadLibraryExW(L"icu.dll", nullptr, kSystemLibraryLoadFlags); // Windows 10 1903
+		// if (hDLL == nullptr) { // Windows 10 1703, legacy outdated
+		// 	hDLL = LoadLibraryExW(L"icuuc.dll", nullptr, kSystemLibraryLoadFlags);
+		// }
+		if (hDLL != nullptr) {
+			pfn_charName = DLLFunction<u_charNameSig>(hDLL, "u_charName");
+			pfn_getIntPropertyValue = DLLFunction<u_getIntPropertyValueSig>(hDLL, "u_getIntPropertyValue");
+			pfn_getPropertyValueName = DLLFunction<u_getPropertyValueNameSig>(hDLL, "u_getPropertyValueName");
+			if (pfn_charName == nullptr || pfn_getIntPropertyValue == nullptr || pfn_getPropertyValueName == nullptr) {
+				FreeLibrary(hDLL);
+			} else {
+				hICUDLL = hDLL;
+				triedLoadingICU = 2;
+			}
+		}
+	}
+	if (triedLoadingICU == 2) {
+		StrCpyEx(buffer + length, "\nName: ");
+		length += CSTRLEN("\nName: ");
+		int value = 0;
+		length += pfn_charName(character, U_EXTENDED_CHAR_NAME, buffer + length, COUNTOF(buffer) - length, &value);
+		value = pfn_getIntPropertyValue(character, UCHAR_GENERAL_CATEGORY);
+		const char *shortName = pfn_getPropertyValueName(UCHAR_GENERAL_CATEGORY, value, U_SHORT_PROPERTY_NAME);
+		const char *longName = pfn_getPropertyValueName(UCHAR_GENERAL_CATEGORY, value, U_LONG_PROPERTY_NAME);
+		sprintf(buffer + length, "\nCategory: %s %s", shortName, longName);
+	}
+
+	const WPARAM notifyPos = (static_cast<WPARAM>(position) << 2) | SC_NOTIFICATIONPOSITION_NONE;
+	ShowNotificationA(notifyPos, buffer);
+
+	MultiByteToWideChar(CP_UTF8, 0, buffer, -1, wchBuf, COUNTOF(wchBuf));
+	SetClipData(hwndMain, wchBuf);
 }
 
 void EditBase64Encode(Base64EncodingFlag encodingFlag) noexcept {
@@ -4190,11 +4255,7 @@ void EditSortLines(EditSortFlag iSortFlags) noexcept {
 				// convert to uppercase for case insensitive comparison
 				// https://learn.microsoft.com/en-us/dotnet/api/system.string.toupper?view=net-7.0#system-string-toupper
 				LPWSTR pwszSortLine = pszTextW + cchTotal;
-#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
 				const UINT charsConverted = LCMapStringEx(LOCALE_NAME_USER_DEFAULT, LCMAP_UPPERCASE, pwszLine, cchLine, pwszSortLine, static_cast<int>(cbPmszBuf), nullptr, nullptr, 0);
-#else
-				const UINT charsConverted = LCMapString(LOCALE_USER_DEFAULT, LCMAP_UPPERCASE, pwszLine, cchLine, pwszSortLine, static_cast<int>(cbPmszBuf));
-#endif
 				cchTotal += NP2_align_up(charsConverted, alignof(WCHAR *)/sizeof(WCHAR));
 				pwszLine = pwszSortLine;
 			}
@@ -4239,9 +4300,12 @@ void EditSortLines(EditSortFlag iSortFlags) noexcept {
 	}
 
 	if (iSortFlags & EditSortFlag_Shuffle) {
-		srand(GetTickCount());
+		// srand(GetTickCount());
+		uint32_t state = GetTickCount();
 		for (Sci_Line i = iLineCount - 1; i > 0; i--) {
-			const Sci_Line j = rand() % i;
+			// const Sci_Line j = rand() % i;
+			state = state*1103515245 + 12345; // see TestUtils.h
+			const Sci_Line j = ((state >> 16) & RAND_MAX) % i;
 			const SORTLINE sLine = pLines[i];
 			pLines[i] = pLines[j];
 			pLines[j] = sLine;
@@ -4594,7 +4658,7 @@ static LRESULT CALLBACK AddBackslashEditProc(HWND hwnd, UINT umsg, WPARAM wParam
 		LPWSTR lpsz = EditGetClipboardTextW();
 		if (StrNotEmpty(lpsz)) {
 			const int len = lstrlen(lpsz);
-			LPWSTR lpszEsc = static_cast<LPWSTR>(NP2HeapAlloc((2*len + 1)*sizeof(WCHAR)));
+			LPWSTR lpszEsc = static_cast<LPWSTR>(NP2HeapAlloc((kMaxBackslashEscapeCount*len + 1)*sizeof(WCHAR)));
 			if (lpszEsc != nullptr) {
 				AddBackslashW(lpszEsc, lpsz);
 				SendMessage(hwnd, EM_REPLACESEL, TRUE, AsInteger<LPARAM>(lpszEsc));
@@ -4677,24 +4741,18 @@ void EditSaveSelectionAsFindText(EDITFINDREPLACE *lpefr, int menu, bool findSele
 	}
 }
 
-static void FindReplaceSetFont(HWND hwnd, bool monospaced, HFONT *hFontFindReplaceEdit) noexcept {
-	HWND hwndFind = GetDlgItem(hwnd, IDC_FINDTEXT);
-	HWND hwndRepl = GetDlgItem(hwnd, IDC_REPLACETEXT);
+static void FindReplaceSetFont(HWND hwnd, BOOL monospaced, HFONT *hFontFindReplaceEdit) noexcept {
 	HFONT font = nullptr;
 	if (monospaced) {
-		font = *hFontFindReplaceEdit;
-		if (font == nullptr) {
-			*hFontFindReplaceEdit = font = Style_CreateCodeFont(g_uCurrentDPI);
-		}
+		const UINT dpi = GetWindowDPI(hwnd);
+		font = Style_CreateCodeFont(dpi);
+		*hFontFindReplaceEdit = font;
 	}
 	if (font == nullptr) {
-		// use font from parent window
 		font = GetWindowFont(hwnd);
 	}
-	SetWindowFont(hwndFind, font, TRUE);
-	if (hwndRepl) {
-		SetWindowFont(hwndRepl, font, TRUE);
-	}
+	SendDlgItemMessage(hwnd, IDC_FINDTEXT, WM_SETFONT, AsInteger<WPARAM>(font), TRUE);
+	SendDlgItemMessage(hwnd, IDC_REPLACETEXT, WM_SETFONT, AsInteger<WPARAM>(font), TRUE);
 }
 
 static bool CopySelectionAsFindText(HWND hwnd, EDITFINDREPLACE *lpefr, bool bFirstTime) noexcept {
@@ -4725,7 +4783,7 @@ static bool CopySelectionAsFindText(HWND hwnd, EDITFINDREPLACE *lpefr, bool bFir
 	}
 
 	if (StrNotEmpty(lpszSelection)) {
-		char *lpszEscSel = static_cast<char *>(NP2HeapAlloc((2 * NP2_FIND_REPLACE_LIMIT)));
+		char *lpszEscSel = static_cast<char *>(NP2HeapAlloc((kMaxBackslashEscapeCount * NP2_FIND_REPLACE_LIMIT)));
 		unsigned option = lpefr->option & ~FindReplaceOption_TransformBackslash;
 		if (AddBackslashA(lpszEscSel, lpszSelection)) {
 			if ((lpefr->fuFlags & SCFIND_REGEXP) == 0) {
@@ -4750,6 +4808,23 @@ static bool CopySelectionAsFindText(HWND hwnd, EDITFINDREPLACE *lpefr, bool bFir
 // EditFindReplaceDlgProc()
 //
 static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP2),
+		DeferCtlMoveX(IDOK),
+		DeferCtlSizeX(IDC_FINDTEXT),
+		DeferCtlMoveX(IDC_CLEAR_FIND),
+		DeferCtlMoveX(IDC_FINDPREV),
+		DeferCtlMoveX(IDC_SAVEPOSITION),
+		DeferCtlMoveX(IDC_RESETPOSITION),
+		DeferCtlMoveX(IDC_FINDALL),
+		DeferCtlMoveX(IDC_REPLACEALL),
+		// replace
+		DeferCtlSizeX(IDC_REPLACETEXT),
+		DeferCtlMoveX(IDC_CLEAR_REPLACE),
+		DeferCtlMoveX(IDC_REPLACE),
+		DeferCtlMoveX(IDC_REPLACEINSEL),
+	};
+
 	static int bSwitchedFindReplace = 0;
 	static int xFindReplaceDlgSave;
 	static int yFindReplaceDlgSave;
@@ -4760,7 +4835,9 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 	switch (umsg) {
 	case WM_INITDIALOG: {
 		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
-		ResizeDlg_InitX(hwnd, cxFindReplaceDlg, IDC_RESIZEGRIP2);
+		HWND hwndRepl = GetDlgItem(hwnd, IDC_REPLACETEXT);
+		const DWORD controlCount = hwndRepl ? COUNTOF(controlDefinition) : COUNTOF(controlDefinition) - 4;
+		ResizeDlg_InitX(hwnd, &positionRecord.cxFindReplaceDlg, controlDefinition, controlCount);
 
 		HWND hwndFind = GetDlgItem(hwnd, IDC_FINDTEXT);
 		AddBackslashComboBoxSetup(hwndFind);
@@ -4781,7 +4858,6 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 		ComboBox_LimitText(hwndFind, NP2_FIND_REPLACE_LIMIT);
 		ComboBox_SetExtendedUI(hwndFind, TRUE);
 
-		HWND hwndRepl = GetDlgItem(hwnd, IDC_REPLACETEXT);
 		if (hwndRepl) {
 			AddBackslashComboBoxSetup(hwndRepl);
 			mruReplace.AddToCombobox(hwndRepl);
@@ -4833,10 +4909,10 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 		}
 
 		if (!bSwitchedFindReplace) {
-			if (xFindReplaceDlg == 0 || yFindReplaceDlg == 0) {
+			if (positionRecord.xFindReplaceDlg == 0 || positionRecord.yFindReplaceDlg == 0) {
 				CenterDlgInParent(hwnd);
 			} else {
-				SetDlgPos(hwnd, xFindReplaceDlg, yFindReplaceDlg);
+				SetDlgPos(hwnd, positionRecord.xFindReplaceDlg, positionRecord.yFindReplaceDlg);
 			}
 		} else {
 			bSwitchedFindReplace = 0;
@@ -4876,41 +4952,15 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 	break;
 
 	case WM_DESTROY:
+	case WM_DPICHANGED:
 		if (hFontFindReplaceEdit) {
 			DeleteObject(hFontFindReplaceEdit);
 			hFontFindReplaceEdit = nullptr;
 		}
-		ResizeDlg_Destroy(hwnd, &cxFindReplaceDlg, nullptr);
-		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		const bool isReplace = GetDlgItem(hwnd, IDC_REPLACETEXT) != nullptr;
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(isReplace ? 13 : 9);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP2, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_FINDTEXT, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_CLEAR_FIND, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_FINDPREV, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_SAVEPOSITION, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESETPOSITION, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_FINDALL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_REPLACEALL, dx, 0, SWP_NOSIZE);
-		if (isReplace) {
-			hdwp = DeferCtlPos(hdwp, hwnd, IDC_REPLACETEXT, dx, 0, SWP_NOMOVE);
-			hdwp = DeferCtlPos(hdwp, hwnd, IDC_CLEAR_REPLACE, dx, 0, SWP_NOSIZE);
-			hdwp = DeferCtlPos(hdwp, hwnd, IDC_REPLACE, dx, 0, SWP_NOSIZE);
-			hdwp = DeferCtlPos(hdwp, hwnd, IDC_REPLACEINSEL, dx, 0, SWP_NOSIZE);
+		if (umsg == WM_DPICHANGED && IsButtonChecked(hwnd, IDC_USEMONOSPACEDFONT)) {
+			FindReplaceSetFont(hwnd, TRUE, &hFontFindReplaceEdit);
 		}
-		EndDeferWindowPos(hdwp);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
+		return FALSE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -4965,6 +5015,10 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 				iFindReplaceOption &= ~mask;
 			}
 			if (LOWORD(wParam) == IDC_USEMONOSPACEDFONT) {
+				if (hFontFindReplaceEdit) { // dpi may changed between toggle monospaced font
+					DeleteObject(hFontFindReplaceEdit);
+					hFontFindReplaceEdit = nullptr;
+				}
 				FindReplaceSetFont(hwnd, iFindReplaceOption & FindReplaceOption_UseMonospacedFont, &hFontFindReplaceEdit);
 			}
 		} break;
@@ -5211,12 +5265,12 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 			break;
 
 			case IDC_SAVEPOSITION:
-				GetDlgPos(hwnd, &xFindReplaceDlg, &yFindReplaceDlg);
+				GetDlgPos(hwnd, &positionRecord.xFindReplaceDlg, &positionRecord.yFindReplaceDlg);
 				break;
 
 			case IDC_RESETPOSITION:
 				CenterDlgInParent(hwnd);
-				xFindReplaceDlg = yFindReplaceDlg = 0;
+				positionRecord.xFindReplaceDlg = positionRecord.yFindReplaceDlg = 0;
 				break;
 			}
 			break;
@@ -5224,7 +5278,7 @@ static INT_PTR CALLBACK EditFindReplaceDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 	}
 	break;
 
-	case WM_ACTIVATE :
+	case WM_ACTIVATE:
 		SetWindowTransparentMode(hwnd, (LOWORD(wParam) == WA_INACTIVE && (iFindReplaceOption & FindReplaceOption_TransparentMode) != 0), iFindReplaceOpacityLevel);
 		break;
 	}
@@ -6070,7 +6124,7 @@ static INT_PTR CALLBACK EditLineNumDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, 
 			}
 
 			if (!(fTranslated || fTranslated2)) {
-				PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, IDC_LINENUM)), 1);
+				PostMessage(hwnd, WM_NEXTDLGCTL, AsInteger<WPARAM>(GetDlgItem(hwnd, IDC_LINENUM)), TRUE);
 				return TRUE;
 			}
 
@@ -6120,14 +6174,27 @@ bool EditLineNumDlg(HWND hwnd) noexcept {
 // EditModifyLinesDlg()
 //
 //
-extern int cxModifyLinesDlg;
-extern int cyModifyLinesDlg;
-extern int cxEncloseSelectionDlg;
-extern int cyEncloseSelectionDlg;
-extern int cxInsertTagDlg;
-extern int cyInsertTagDlg;
-
 static INT_PTR CALLBACK EditModifyLinesDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMove(IDC_RESIZEGRIP2),
+		DeferCtlMove(IDOK),
+		DeferCtlMove(IDCANCEL),
+		DeferCtlSizeXY1(IDC_MODIFY_LINE_PREFIX),
+		DeferCtlMoveY1(IDC_MODIFY_LINE_TIP2),
+		DeferCtlMoveY1SizeXY2(IDC_MODIFY_LINE_APPEND),
+		DeferCtlMoveY(IDC_MODIFY_LINE_SKIP_EMPTY),
+		DeferCtlMoveY(IDC_MODIFY_LINE_DLN_NP),
+		DeferCtlMoveY(IDC_MODIFY_LINE_DLN_ZP),
+		DeferCtlMoveY(IDC_MODIFY_LINE_TIP_DLN),
+		DeferCtlMoveY(IDC_MODIFY_LINE_CN_NP),
+		DeferCtlMoveY(IDC_MODIFY_LINE_CN_ZP),
+		DeferCtlMoveY(IDC_MODIFY_LINE_TIP_CN),
+		DeferCtlMoveY(IDC_MODIFY_LINE_ZCN_NP),
+		DeferCtlMoveY(IDC_MODIFY_LINE_ZCN_ZP),
+		DeferCtlMoveY(IDC_MODIFY_LINE_TIP_ZCN),
+		MAKELONG(IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND),
+	};
+
 	static DWORD id_hover;
 	static DWORD id_capture;
 	static bool skipEmptyLine;
@@ -6135,16 +6202,12 @@ static INT_PTR CALLBACK EditModifyLinesDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 
 	switch (umsg) {
 	case WM_INITDIALOG: {
-		ResizeDlg_InitY2(hwnd, cxModifyLinesDlg, cyModifyLinesDlg, IDC_RESIZEGRIP2, IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND);
+		ResizeDlg_InitY2(hwnd, &positionRecord.cxModifyLinesDlg, &positionRecord.cyModifyLinesDlg, controlDefinition, COUNTOF(controlDefinition) - 1, 50);
 
 		id_hover = 0;
 		id_capture = 0;
 
-		HFONT hFontNormal = AsPointer<HFONT>(SendDlgItemMessage(hwnd, IDC_MODIFY_LINE_DLN_NP, WM_GETFONT, 0, 0));
-		if (hFontNormal == nullptr) {
-			hFontNormal = GetStockFont(DEFAULT_GUI_FONT);
-		}
-
+		HFONT hFontNormal = GetWindowFont(hwnd);
 		LOGFONT lf;
 		GetObject(hFontNormal, sizeof(LOGFONT), &lf);
 		lf.lfUnderline = TRUE;
@@ -6162,41 +6225,8 @@ static INT_PTR CALLBACK EditModifyLinesDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 	return TRUE;
 
 	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxModifyLinesDlg, &cyModifyLinesDlg);
 		DeleteObject(hFontHover);
 		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-		int dy;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, &dy);
-		const int cy = ResizeDlg_CalcDeltaY2(hwnd, dy, 50, IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND);
-		HDWP hdwp = BeginDeferWindowPos(15);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP2, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_PREFIX, dx, cy, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_APPEND, 0, cy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_TIP2, 0, cy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_SKIP_EMPTY, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_DLN_NP, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_DLN_ZP, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_TIP_DLN, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_CN_NP, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_CN_ZP, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_TIP_CN, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_ZCN_NP, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_ZCN_ZP, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_TIP_ZCN, 0, dy, SWP_NOSIZE);
-		EndDeferWindowPos(hdwp);
-		ResizeDlgCtl(hwnd, IDC_MODIFY_LINE_APPEND, dx, dy - cy);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_NCACTIVATE:
 		if (!wParam) {
@@ -6220,7 +6250,7 @@ static INT_PTR CALLBACK EditModifyLinesDlgProc(HWND hwnd, UINT umsg, WPARAM wPar
 			} else {
 				SetTextColor(hdc, RGB(0, 0, 255));
 			}
-			SelectObject(hdc, /*dwId == id_hover?*/hFontHover/*:hFontNormal*/);
+			SelectFont(hdc, /*dwId == id_hover?*/hFontHover/*:hFontNormal*/);
 			return AsInteger<LONG_PTR>(GetSysColorBrush(COLOR_BTNFACE));
 		}
 	}
@@ -6381,9 +6411,20 @@ bool EditAlignDlg(HWND hwnd, EditAlignMode *piAlignMode) noexcept {
 //
 //
 static INT_PTR CALLBACK EditEncloseSelectionDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+	static const DWORD controlDefinition[] = {
+		DeferCtlMove(IDC_RESIZEGRIP2),
+		DeferCtlMove(IDOK),
+		DeferCtlMove(IDCANCEL),
+		DeferCtlSizeXY1(IDC_MODIFY_LINE_PREFIX),
+		DeferCtlMoveY1(IDC_MODIFY_LINE_TIP2),
+		DeferCtlMoveY1SizeXY2(IDC_MODIFY_LINE_APPEND),
+		MAKELONG(IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND),
+	};
+
 	switch (umsg) {
 	case WM_INITDIALOG: {
-		ResizeDlg_InitY2(hwnd, cxEncloseSelectionDlg, cyEncloseSelectionDlg, IDC_RESIZEGRIP2, IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND);
+		ResizeDlg_InitY2(hwnd, &positionRecord.cxEncloseSelectionDlg, &positionRecord.cyEncloseSelectionDlg, controlDefinition, COUNTOF(controlDefinition) - 1, 50);
 
 		MultilineEditSetup(hwnd, IDC_MODIFY_LINE_PREFIX);
 		SetDlgItemText(hwnd, IDC_MODIFY_LINE_PREFIX, wchPrefixSelection);
@@ -6392,32 +6433,6 @@ static INT_PTR CALLBACK EditEncloseSelectionDlgProc(HWND hwnd, UINT umsg, WPARAM
 		CenterDlgInParent(hwnd);
 	}
 	return TRUE;
-
-	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxEncloseSelectionDlg, &cyEncloseSelectionDlg);
-		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-		int dy;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, &dy);
-		const int cy = ResizeDlg_CalcDeltaY2(hwnd, dy, 50, IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND);
-		HDWP hdwp = BeginDeferWindowPos(6);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP2, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_PREFIX, dx, cy, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_APPEND, 0, cy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_TIP2, 0, cy, SWP_NOSIZE);
-		EndDeferWindowPos(hdwp);
-		ResizeDlgCtl(hwnd, IDC_MODIFY_LINE_APPEND, dx, dy - cy);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -6456,9 +6471,20 @@ void EditEncloseSelectionDlg(HWND hwnd) noexcept {
 //
 //
 static INT_PTR CALLBACK EditInsertTagDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	UNREFERENCED_PARAMETER(lParam);
+	static const DWORD controlDefinition[] = {
+		DeferCtlMove(IDC_RESIZEGRIP2),
+		DeferCtlMove(IDOK),
+		DeferCtlMove(IDCANCEL),
+		DeferCtlSizeXY1(IDC_MODIFY_LINE_PREFIX),
+		DeferCtlMoveY1(IDC_MODIFY_LINE_TIP2),
+		DeferCtlMoveY1SizeXY2(IDC_MODIFY_LINE_APPEND),
+		MAKELONG(IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND),
+	};
+
 	switch (umsg) {
 	case WM_INITDIALOG: {
-		ResizeDlg_InitY2(hwnd, cxInsertTagDlg, cyInsertTagDlg, IDC_RESIZEGRIP2, IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND);
+		ResizeDlg_InitY2(hwnd, &positionRecord.cxInsertTagDlg, &positionRecord.cyInsertTagDlg, controlDefinition, COUNTOF(controlDefinition) - 1, 75);
 
 		MultilineEditSetup(hwnd, IDC_MODIFY_LINE_PREFIX);
 		MultilineEditSetup(hwnd, IDC_MODIFY_LINE_APPEND);
@@ -6470,32 +6496,6 @@ static INT_PTR CALLBACK EditInsertTagDlgProc(HWND hwnd, UINT umsg, WPARAM wParam
 		CenterDlgInParent(hwnd);
 	}
 	return FALSE;
-
-	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxInsertTagDlg, &cyInsertTagDlg);
-		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-		int dy;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, &dy);
-		const int cy = ResizeDlg_CalcDeltaY2(hwnd, dy, 75, IDC_MODIFY_LINE_PREFIX, IDC_MODIFY_LINE_APPEND);
-		HDWP hdwp = BeginDeferWindowPos(6);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP2, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_PREFIX, dx, cy, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_APPEND, 0, cy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_MODIFY_LINE_TIP2, 0, cy, SWP_NOSIZE);
-		EndDeferWindowPos(hdwp);
-		ResizeDlgCtl(hwnd, IDC_MODIFY_LINE_APPEND, dx, dy - cy);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -6732,6 +6732,7 @@ static const UnicodeControlCharacter kUnicodeControlCharacterTable[] = {
 	{ "\xe2\x81\xa8", "FSI" },	// U+2068	FSI		First strong isolate
 	{ "\xe2\x81\xa9", "PDI" },	// U+2069	PDI		Pop directional isolate
 	{ "\xd8\x9c", "ALM" },		// U+061C	ALM		Arabic letter mark
+	{ "\xc2\xad", "SHY" },		// U+00AD	SHY		Soft hyphen
 };
 
 void EditInsertUnicodeControlCharacter(int menu) noexcept {
@@ -6910,7 +6911,7 @@ void EditSelectionAction(int action) noexcept {
 		L"CustomAction2",
 	};
 
-	WCHAR szCmdTemplate[256];
+	WCHAR szCmdTemplate[MAX_PATH*2];
 	action -= CMD_ONLINE_SEARCH_GOOGLE;
 	LPCWSTR actionKey = kActionKeys[action];
 	BOOL bCmdEnabled = IniGetString(INI_SECTION_NAME_FLAGS, actionKey, L"", szCmdTemplate, COUNTOF(szCmdTemplate));
@@ -6927,15 +6928,18 @@ void EditSelectionAction(int action) noexcept {
 		return;
 	}
 
-	LPWSTR lpszCommand = static_cast<LPWSTR>(NP2HeapAlloc(sizeof(WCHAR) * (cchEscapedW + COUNTOF(szCmdTemplate) + MAX_PATH + 32)));
+	LPWSTR lpszCommand = static_cast<LPWSTR>(NP2HeapAlloc(sizeof(WCHAR) * (cchEscapedW + COUNTOF(szCmdTemplate) + 32)));
 	const size_t cbCommand = NP2HeapSize(lpszCommand);
 	wsprintf(lpszCommand, szCmdTemplate, pszEscapedW);
 
 	LPWSTR lpszArgs = static_cast<LPWSTR>(NP2HeapAlloc(cbCommand));
 	ExtractFirstArgument(lpszCommand, lpszCommand, lpszArgs);
-	ExpandEnvironmentStringsEx(lpszArgs, static_cast<DWORD>(cbCommand / sizeof(WCHAR)));
+	if (ExpandEnvironmentStringsEx(lpszArgs, szCmdTemplate)) {
+		lstrcpy(lpszArgs, szCmdTemplate);
+	}
 
-	WCHAR wchDirectory[MAX_PATH] = L"";
+	auto &wchDirectory = szCmdTemplate;
+	SetStrEmpty(wchDirectory);
 	if (StrNotEmpty(szCurFile)) {
 		lstrcpy(wchDirectory, szCurFile);
 		PathRemoveFileSpec(wchDirectory);
@@ -6960,9 +6964,11 @@ void EditSelectionAction(int action) noexcept {
 }
 
 void TryBrowseFile(HWND hwnd, LPCWSTR pszFile, bool bWarn) noexcept {
-	WCHAR tchParam[MAX_PATH + 4] = L"";
-	WCHAR tchExeFile[MAX_PATH + 4] = L"";
+	WCHAR tchParam[MAX_PATH + 4];
+	WCHAR tchExeFile[MAX_PATH + 4];
 	WCHAR tchTemp[MAX_PATH + 4];
+	SetStrEmpty(tchParam);
+	SetStrEmpty(tchExeFile);
 
 	if (IniGetString(INI_SECTION_NAME_FLAGS, L"filebrowser.exe", L"", tchTemp, COUNTOF(tchTemp))) {
 		ExtractFirstArgument(tchTemp, tchExeFile, tchParam);
@@ -6971,7 +6977,7 @@ void TryBrowseFile(HWND hwnd, LPCWSTR pszFile, bool bWarn) noexcept {
 		lstrcpy(tchExeFile, L"matepath.exe");
 	}
 	if (PathIsRelative(tchExeFile)) {
-		GetProgramRealPath(tchTemp, COUNTOF(tchTemp));
+		lstrcpy(tchTemp, szExeRealPath);
 		PathRemoveFileSpec(tchTemp);
 		PathAppend(tchTemp, tchExeFile);
 		if (PathIsFile(tchTemp)) {
@@ -7096,7 +7102,7 @@ char *EditGetStringAroundCaret(LPCSTR delimiters) noexcept {
 
 extern bool bOpenFolderWithMatepath;
 
-static DWORD EditOpenSelectionCheckFile(LPCWSTR link, LPWSTR path, DWORD cchFilePath, LPWSTR wchDirectory) noexcept {
+static DWORD EditOpenSelectionCheckFile(LPCWSTR link, wchar_t (&path)[MAX_PATH*2], LPWSTR wchDirectory) noexcept {
 	if (StrStartsWith(link, L"//")) {
 		// issue #454, treat as link
 		lstrcpy(path, L"http:");
@@ -7105,9 +7111,10 @@ static DWORD EditOpenSelectionCheckFile(LPCWSTR link, LPWSTR path, DWORD cchFile
 	}
 
 	DWORD dwAttributes = GetFileAttributes(link);
+	constexpr DWORD cchFilePath = COUNTOF(path);
 	if (dwAttributes == INVALID_FILE_ATTRIBUTES) {
 		// handle variables expanded into absolute path, avoid touch percent encoded URL
-		if (link[0] == '%' && ExpandEnvironmentStrings(link, path, cchFilePath)) {
+		if (link[0] == '%' && ExpandEnvironmentStringsEx(link, path)) {
 			dwAttributes = GetFileAttributes(path);
 		}
 		if (dwAttributes == INVALID_FILE_ATTRIBUTES && StrNotEmpty(szCurFile)) {
@@ -7219,12 +7226,12 @@ void EditOpenSelection(OpenSelectionType type) {
 
 		WCHAR path[MAX_PATH * 2];
 		WCHAR wchDirectory[MAX_PATH];
-		DWORD dwAttributes = EditOpenSelectionCheckFile(link, path, COUNTOF(path), wchDirectory);
+		DWORD dwAttributes = EditOpenSelectionCheckFile(link, path, wchDirectory);
 		if (dwAttributes == INVALID_FILE_ATTRIBUTES) {
 			if (line != nullptr) {
 				const WCHAR ch = *back;
 				*back = L'\0';
-				dwAttributes = EditOpenSelectionCheckFile(link, path, COUNTOF(path), wchDirectory);
+				dwAttributes = EditOpenSelectionCheckFile(link, path, wchDirectory);
 				if (dwAttributes == INVALID_FILE_ATTRIBUTES) {
 					// line is port number or the file not exists
 					*back = ch;
@@ -7323,7 +7330,7 @@ void EditOpenSelection(OpenSelectionType type) {
 			if (cchTextW > 1 && link[0] == L'#') {
 				// regex find link anchor in current document
 				// html, markdown: (id | name) = [' | "] anchor [' | "]
-				mszSelection = static_cast<char *>(NP2HeapAlloc(2*cchSelection + 32));
+				mszSelection = static_cast<char *>(NP2HeapAlloc(kMaxRegexEscapeCount*cchSelection + 32));
 				strcpy(mszSelection, "name\\s*=\\s*[\'\"]?");
 				char *lpstrText = mszSelection + CSTRLEN("name\\s*=\\s*[\'\"]?");
 				char* const lpszArgs = lpstrText + cchSelection;

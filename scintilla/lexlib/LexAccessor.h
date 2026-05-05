@@ -24,7 +24,7 @@ class LexAccessor {
 		bufferSize = 4096,
 		slopSize = bufferSize / 8,
 	};
-	char buf[bufferSize + 4];
+	char buf[bufferSize + sizeof(int)];
 	const EncodingType encodingType;
 	Sci_Position startPos = 0;
 	Sci_Position endPos = 0;
@@ -65,9 +65,9 @@ public:
 		lenDoc(pAccess->Length()) {
 		// Prevent warnings by static analyzers about uninitialized buf and styleBuf.
 		// zero unused padding to prevent potential out of bounds bug.
-		memset(buf, 0, 4);
-		memset(buf + bufferSize, 0, 4);
-		memset(styleBuf, 0, 4);
+		memset(buf, 0, sizeof(int));
+		memset(buf + bufferSize, 0, sizeof(int));
+		memset(styleBuf, 0, sizeof(int));
 	}
 	char operator[](Sci_Position position) noexcept {
 		if (position < startPos || position >= endPos) {
@@ -147,8 +147,8 @@ public:
 	void GetRange(Sci_PositionU startPos_, Sci_PositionU endPos_, char *s, Sci_PositionU len) const noexcept;
 	void GetRangeLowered(Sci_PositionU startPos_, Sci_PositionU endPos_, char *s, Sci_PositionU len) const noexcept;
 	// Get all characters in range [startPos_, endPos_).
-	std::string GetRange(Sci_PositionU startPos_, Sci_PositionU endPos_) const;
-	std::string GetRangeLowered(Sci_PositionU startPos_, Sci_PositionU endPos_) const;
+	void GetRange(Sci_PositionU startPos_, Sci_PositionU endPos_, std::string &s) const;
+	void GetRangeLowered(Sci_PositionU startPos_, Sci_PositionU endPos_, std::string &s) const;
 
 	// Flush() must be called first when used in Colourise() or Lex() function.
 	unsigned char StyleAt(Sci_Position position) const noexcept {
@@ -220,26 +220,30 @@ public:
 		ColorTo(pos + 1, chAttr);
 	}
 #endif
+	SCI_noinline
 	void ColorTo(Sci_PositionU endPos_, int chAttr) {
-		// Only perform styling if non empty range
-		assert(endPos_ <= static_cast<Sci_PositionU>(Length()));
+		// Only perform styling for non empty range [startSeg, endPos_)
+		assert(endPos_ >= startSeg && endPos_ <= static_cast<Sci_PositionU>(Length()));
 		if (endPos_ > startSeg) {
-			const Sci_PositionU len = endPos_ - startSeg;
+			Sci_PositionU len = endPos_ - startSeg;
 			if (validLen + len >= bufferSize) {
 				Flush();
 			}
+			assert((startPosStyling + validLen + len) <= static_cast<Sci_PositionU>(Length()));
 			const auto attr = static_cast<unsigned char>(chAttr);
-			if (validLen + len >= bufferSize) {
+			startSeg += len;
+			if (validLen + len < bufferSize) {
+				unsigned char *ptr = styleBuf + validLen;
+				validLen += len;
+				do {
+					*ptr++ = attr;
+					--len;
+				} while (len != 0);
+			} else {
 				// Too big for buffer so send directly
 				pAccess->SetStyleFor(len, attr);
-			} else {
-				for (Sci_PositionU i = 0; i < len; i++) {
-					assert((startPosStyling + validLen) < static_cast<Sci_PositionU>(Length()));
-					styleBuf[validLen++] = attr;
-				}
 			}
 		}
-		startSeg = endPos_;
 	}
 	void SetLevel(Sci_Line line, int level) {
 		pAccess->SetLevel(line, level);
@@ -371,16 +375,30 @@ inline unsigned char LexGetNextChar(LexAccessor &styler, Sci_Position startPos, 
 	return '\0';
 }
 
+struct MatchedDelimiterCount {
+	int count;
+	int chNext;
+};
+
+inline MatchedDelimiterCount GetMatchedDelimiterCountEx(LexAccessor &styler, Sci_PositionU pos, int delimiter) noexcept {
+	int count = 0;
+	int chNext;
+	do {
+		++count;
+		++pos;
+		chNext = styler.SafeGetUCharAt(pos);
+	} while (chNext == delimiter);
+	return {count, chNext};
+}
+
 inline int GetMatchedDelimiterCount(LexAccessor &styler, Sci_PositionU pos, int delimiter) noexcept {
-	int count = 1;
-	while (true) {
-		const uint8_t ch = styler.SafeGetCharAt(++pos);
-		if (ch == delimiter) {
-			++count;
-		} else {
-			break;
-		}
-	}
+	int count = 0;
+	int chNext;
+	do {
+		++count;
+		++pos;
+		chNext = styler.SafeGetUCharAt(pos);
+	} while (chNext == delimiter);
 	return count;
 }
 

@@ -36,7 +36,7 @@ def UpdateFile(filename, updated):
     file else leave alone so Mercurial and make don't treat it as modified. """
     newOrChanged = "Changed"
     try:
-        with open(filename, "r", encoding="utf-8", newline='') as infile:
+        with open(filename, encoding="utf-8", newline='') as infile:
             original = infile.read()
         if updated == original:
             # Same as before so don't write
@@ -46,7 +46,7 @@ def UpdateFile(filename, updated):
         if updated == original:
             return
         os.unlink(filename)
-    except IOError: # File is not there yet
+    except OSError: # File is not there yet
         newOrChanged = "New"
     with open(filename, "w", encoding="utf-8", newline='') as outfile:
         outfile.write(updated)
@@ -137,12 +137,12 @@ def GenerateFile(inpath, outpath, commentPrefix, retainDefs, *lists):
     """
 
     try:
-        with open(inpath, "r", encoding="utf-8") as infile:
+        with open(inpath, encoding="utf-8") as infile:
             original = infile.read()
         updated = CopyWithInsertion(original, commentPrefix,
             retainDefs, lists)
         UpdateFile(outpath, updated)
-    except IOError:
+    except OSError:
         print(f"Can not open {inpath}")
 
 def Generate(inpath, outpath, commentPrefix, *lists):
@@ -161,7 +161,7 @@ def UpdateLineInPlistFile(path, key, value):
     lines = []
     keyCurrent = ""
     with open(path, "rb", encoding="utf-8") as f:
-        for line in f.readlines():
+        for line in f:
             ls = line.strip()
             if ls.startswith("<key>"):
                 keyCurrent = ls.replace("<key>", "").replace("</key>", "")
@@ -177,8 +177,8 @@ def UpdateLineInPlistFile(path, key, value):
 def UpdateLineInFile(path, linePrefix, lineReplace):
     lines = []
     updated = False
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f.readlines():
+    with open(path, encoding="utf-8") as f:
+        for line in f:
             line = line.rstrip()
             if not updated and line.startswith(linePrefix):
                 lines.append(lineReplace)
@@ -193,7 +193,7 @@ def UpdateLineInFile(path, linePrefix, lineReplace):
 def ReadFileAsList(path):
     """Read all the lines in the file and return as a list of strings without line ends.
     """
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         return [line.rstrip('\n') for line in f]
 
 def UpdateFileFromLines(path, lines, lineEndToUse):
@@ -235,9 +235,9 @@ def FindSectionInList(lines, markers):
     return slice(start, end)
 
 def ReplaceREInFile(path, match, replace, count=1):
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         contents = f.read()
-    contents = re.sub(match, replace, contents, count)
+    contents = re.sub(match, replace, contents, count=count)
     UpdateFile(path, contents)
 
 def MakeKeywordGroups(items, maxLineLength=120, prefixLen=1, makeLower=False):

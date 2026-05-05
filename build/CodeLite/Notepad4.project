@@ -38,6 +38,7 @@
       <File Name="../../scintilla/lexers/LexD.cxx"/>
       <File Name="../../scintilla/lexers/LexDart.cxx"/>
       <File Name="../../scintilla/lexers/LexDiff.cxx"/>
+      <File Name="../../scintilla/lexers/LexErlang.cxx"/>
       <File Name="../../scintilla/lexers/LexFortran.cxx"/>
       <File Name="../../scintilla/lexers/LexFSharp.cxx"/>
       <File Name="../../scintilla/lexers/LexGN.cxx"/>
@@ -69,6 +70,7 @@
       <File Name="../../scintilla/lexers/LexPascal.cxx"/>
       <File Name="../../scintilla/lexers/LexPerl.cxx"/>
       <File Name="../../scintilla/lexers/LexPHP.cxx"/>
+      <File Name="../../scintilla/lexers/LexPowerBuilder.cxx"/>
       <File Name="../../scintilla/lexers/LexPowerShell.cxx"/>
       <File Name="../../scintilla/lexers/LexProps.cxx"/>
       <File Name="../../scintilla/lexers/LexPython.cxx"/>
@@ -84,6 +86,7 @@
       <File Name="../../scintilla/lexers/LexTCL.cxx"/>
       <File Name="../../scintilla/lexers/LexTexinfo.cxx"/>
       <File Name="../../scintilla/lexers/LexTOML.cxx"/>
+      <File Name="../../scintilla/lexers/LexTypst.cxx"/>
       <File Name="../../scintilla/lexers/LexVB.cxx"/>
       <File Name="../../scintilla/lexers/LexVerilog.cxx"/>
       <File Name="../../scintilla/lexers/LexVHDL.cxx"/>
@@ -227,6 +230,8 @@
       <File Name="../../src/EditLexers/stlD.cpp"/>
       <File Name="../../src/EditLexers/stlDart.cpp"/>
       <File Name="../../src/EditLexers/stlDefault.cpp"/>
+      <File Name="../../src/EditLexers/stlElixir.cpp"/>
+      <File Name="../../src/EditLexers/stlErlang.cpp"/>
       <File Name="../../src/EditLexers/stlFortran.cpp"/>
       <File Name="../../src/EditLexers/stlFSharp.cpp"/>
       <File Name="../../src/EditLexers/stlGN.cpp"/>
@@ -258,6 +263,7 @@
       <File Name="../../src/EditLexers/stlPascal.cpp"/>
       <File Name="../../src/EditLexers/stlPerl.cpp"/>
       <File Name="../../src/EditLexers/stlPHP.cpp"/>
+      <File Name="../../src/EditLexers/stlPowerBuilder.cpp"/>
       <File Name="../../src/EditLexers/stlPowerShell.cpp"/>
       <File Name="../../src/EditLexers/stlPython.cpp"/>
       <File Name="../../src/EditLexers/stlR.cpp"/>
@@ -274,6 +280,7 @@
       <File Name="../../src/EditLexers/stlTexinfo.cpp"/>
       <File Name="../../src/EditLexers/stlTOML.cpp"/>
       <File Name="../../src/EditLexers/stlTypeScript.cpp"/>
+      <File Name="../../src/EditLexers/stlTypst.cpp"/>
       <File Name="../../src/EditLexers/stlVB.cpp"/>
       <File Name="../../src/EditLexers/stlVBS.cpp"/>
       <File Name="../../src/EditLexers/stlVerilog.cpp"/>

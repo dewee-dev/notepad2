@@ -140,6 +140,12 @@ enum EscFunction {
 	EscFunction_Exit,
 };
 
+enum TransparentMode {
+	TransparentMode_None = 0,
+	TransparentMode_Always,
+	TransparentMode_Inactive,
+};
+
 enum TitlePathNameFormat {
 	TitlePathNameFormat_NameOnly = 0,
 	TitlePathNameFormat_NameFirst,
@@ -178,6 +184,38 @@ enum PrintFooterOption {
 
 extern WCHAR szCurFile[MAX_PATH + 40];
 
+struct WindowPositionRecord {
+	int cxRunDlg;
+	int cxEncodingDlg;
+	int cyEncodingDlg;
+
+	int cxFileMRUDlg;
+	int cyFileMRUDlg;
+	int cxOpenWithDlg;
+	int cyOpenWithDlg;
+	int cxFavoritesDlg;
+	int cyFavoritesDlg;
+	int cxAddFavoritesDlg;
+
+	int cxModifyLinesDlg;
+	int cyModifyLinesDlg;
+	int cxEncloseSelectionDlg;
+	int cyEncloseSelectionDlg;
+	int cxInsertTagDlg;
+	int cyInsertTagDlg;
+
+	int xFindReplaceDlg;
+	int yFindReplaceDlg;
+	int cxFindReplaceDlg;
+
+	int cxStyleSelectDlg;
+	int cyStyleSelectDlg;
+	int cxStyleCustomizeDlg;
+	int cyStyleCustomizeDlg;
+};
+
+extern WindowPositionRecord positionRecord;
+
 //==== Function Declarations ==================================================
 BOOL InitApplication(HINSTANCE hInstance) noexcept;
 void InitInstance(HINSTANCE hInstance, int nCmdShow);
@@ -205,12 +243,8 @@ void ClearWindowPositionHistory() noexcept;
 void ParseCommandLine() noexcept;
 void LoadFlags() noexcept;
 
-bool CheckIniFile(LPWSTR lpszFile, LPCWSTR lpszModule) noexcept;
-bool CheckIniFileRedirect(LPWSTR lpszFile, LPCWSTR lpszModule, LPCWSTR redirectKey) noexcept;
-bool FindIniFile() noexcept;
-bool TestIniFile() noexcept;
+void FindIniFile() noexcept;
 bool CreateIniFile(LPCWSTR lpszIniFile) noexcept;
-void FindExtraIniFile(LPWSTR lpszIniFile, LPCWSTR defaultName, LPCWSTR redirectKey) noexcept;
 
 void UpdateWindowTitle() noexcept;
 void UpdateStatusbar() noexcept;
@@ -260,6 +294,7 @@ enum FileSaveFlag {
 	FileSaveFlag_SaveCopy = 8,
 	FileSaveFlag_EndSession = 16,
 	FileSaveFlag_Untitled = 32,
+	FileSaveFlag_OriginalTimestamp = 64,
 };
 
 bool FileIO(bool fLoad, LPWSTR pszFile, FileSaveFlag flag, EditFileIOStatus &status) noexcept;

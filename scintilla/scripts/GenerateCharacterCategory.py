@@ -10,20 +10,13 @@ from FileGenerator import Regenerate
 from MultiStageTable import *
 from UnicodeData import *
 
+# same as CharacterClass enum in ILexer.h
 class CharacterClass(IntEnum):
 	Space = 0
 	NewLine = 1
 	Punctuation = 2
 	Word = 3
 	CJKWord = 4
-
-CharacterClassOrder = [CharacterClass.CJKWord, CharacterClass.Word, CharacterClass.Punctuation, CharacterClass.NewLine]
-def GetPreferredCharacterClass(values):
-	for value in CharacterClassOrder:
-		if value in values:
-			return value
-	# Cn
-	return CharacterClass.Space
 
 # https://en.wikipedia.org/wiki/Unicode_character_property
 # Document::WordCharacterClass()
@@ -75,6 +68,7 @@ CharClassifyMap = {
 }
 
 CategoryClassifyMap = flattenPropertyMap(CharClassifyMap)
+ccUndefined = (CharacterClass.Space, 'Cn')
 
 # https://en.wikipedia.org/wiki/Private_Use_Areas
 # Category: Other, private use (Co)
@@ -151,8 +145,8 @@ CJKBlockList = [
 ]
 
 def findCategories(filename):
-	with open(filename, "r", encoding="utf-8") as infile:
-		lines = [x.strip() for x in infile.readlines() if "\tcc" in x]
+	with open(filename, encoding="utf-8") as infile:
+		lines = [x.strip() for x in infile if "\tcc" in x]
 	values = "".join(lines).replace(" ","").split(",")
 	print(values)
 	return [v[2:] for v in values]
@@ -199,19 +193,19 @@ def buildFoldDisplayEllipsis():
 	]
 
 	result = {}
-	for encoding, codepage, comment in encodingList:
+	for encoding, codePage, comment in encodingList:
 		try:
 			value = defaultText.encode(encoding)
 			value = bytesToHex(value)
 		except UnicodeEncodeError:
-			if codepage == 932:
+			if codePage == 932:
 				value = fallbackJIS.encode(encoding)
 				value = bytesToHex(value)
 			else:
 				value = fallbackText
 
 		values = result.setdefault(value, [])
-		values.append((codepage, comment))
+		values.append((codePage, comment))
 
 	utf8Text = defaultText.encode('utf-8')
 	utf8Text = bytesToHex(utf8Text)
@@ -222,17 +216,17 @@ def buildFoldDisplayEllipsis():
 	output.append("\tcase SC_CP_UTF8:")
 	output.append(f'\t\treturn "{utf8Text}";')
 	for key, values in result.items():
-		for codepage, comment in values:
-			output.append(f"\tcase {codepage}: // {comment}")
+		for codePage, comment in values:
+			output.append(f"\tcase {codePage}: // {comment}")
 		output.append(f'\t\treturn "{key}";')
 	output.append("\t}")
 
 	result = {}
-	for encoding, codepage, comment in SBCSCodePageList:
+	for encoding, codePage, comment in SBCSCodePageList:
 		try:
 			value = defaultText.encode(encoding)
 			value = bytesToHex(value)
-			result[codepage] = value
+			result[codePage] = value
 		except UnicodeEncodeError:
 			pass
 
@@ -264,14 +258,18 @@ def getCharClassify(decode, ch):
 		category = 'Cn'
 
 	cc = CategoryClassifyMap[category]
-	return int(cc)
+	return cc, category
 
-def buildCharClassify(cp):
-	decode = codecs.getdecoder(cp)
+def buildCharClassify(encoding, codePage):
+	decode_py = codecs.getdecoder(encoding)
+	decode_pd = PlatformDecoder(codePage)
 	result = {}
 	for ch in range(128, 256):
-		cc = getCharClassify(decode, ch)
-		result[ch] = cc
+		cc, category = getCharClassify(decode_pd, ch)
+		cc_py, category_py = getCharClassify(decode_py, ch)
+		if cc != cc_py:
+			print(f'{codePage} character {ch:02X} diff: ({category}, {cc.name}) ({category_py}, {cc_py.name})')
+		result[ch] = int(cc)
 
 	output = [0] * 32
 	for ch, value in result.items():
@@ -283,16 +281,16 @@ def buildCharClassify(cp):
 def buildANSICharClassifyTable(filename):
 	result = {}
 	offset = 0
-	for encoding, codepage, comment in SBCSCodePageList:
-		data = buildCharClassify(encoding)
-		result[codepage] = { 'data': data, 'offset': offset, 'codepage': [(codepage, comment)]}
+	for encoding, codePage, comment in SBCSCodePageList:
+		data = buildCharClassify(encoding, codePage)
+		result[codePage] = { 'data': data, 'offset': offset, 'codePage': [(codePage, comment)]}
 		offset += len(data)
 
 	output = [f"// Created with Python {platform.python_version()}, Unicode {unicodedata.unidata_version}"]
 	output.append("static const uint8_t ANSICharClassifyTable[] = {")
 	for item in result.values():
-		for page in item['codepage']:
-			output.append('// ' + page[1])
+		for codePage in item['codePage']:
+			output.append('// ' + codePage[1])
 		data = item['data']
 		output.extend(dumpArray(data, 16, '0x%02X'))
 	output.append("};")
@@ -320,7 +318,7 @@ return nullptr;
 	Regenerate(filename, "//", output)
 
 def updateCharClassifyTable(filename, headfile):
-	defaultValue = int(CharacterClass.Space)
+	defaultValue = int(ccUndefined[0])
 	indexTable = [defaultValue] * UnicodeCharacterCount
 	for ch in range(UnicodeCharacterCount):
 		uch = chr(ch)
@@ -445,6 +443,8 @@ def updateCharacterCategoryTable(filename):
 	Regenerate(filename, "//", output)
 	Regenerate(filename, "//function", function)
 
+cjkPrivate = (CharacterClass.CJKWord, 'Co')
+cjkLetter = (CharacterClass.CJKWord, 'Lo')
 def getDBCSCharClassify(decode, ch, isReservedOrUDC=None):
 	buf = bytes([ch]) if ch < 256 else bytes([ch >> 8, ch & 0xff])
 	try:
@@ -456,40 +456,131 @@ def getDBCSCharClassify(decode, ch, isReservedOrUDC=None):
 		category = unicodedata.category(uch[0])
 		ch = ord(uch[0])
 		# treat PUA in DBCS as word instead of punctuation or space
-		if isCJKCharacter(category, ch) or (category == 'Co' and isPrivateChar(ch)):
-			return int(CharacterClass.CJKWord)
+		if isCJKCharacter(category, ch):
+			return CharacterClass.CJKWord, category
+		if category == 'Co' and isPrivateChar(ch):
+			return cjkPrivate
 	else:
 		# treat reserved or user-defined characters as word
 		if isReservedOrUDC and isReservedOrUDC(ch, buf):
-			return int(CharacterClass.CJKWord)
+			return cjkPrivate
 		# undefined, treat as Cn, Not assigned
 		category = 'Cn'
 
 	cc = CategoryClassifyMap[category]
-	return int(cc)
+	return cc, category
 
-def makeDBCSCharClassifyTable(output, encodingList, isReservedOrUDC=None):
+def getDBCSPreferredClass(diff, showDiff=False):
+	assigned = []
+	buf = []
+	for key, value in diff.items():
+		cc, category = key
+		if key != cjkPrivate and cc not in assigned:
+			assigned.append(cc)
+		if showDiff:
+			buf.append(f'({cc.name}, {category}): ')
+			first = True
+			for encoding in value:
+				if not first:
+					buf.append(', ')
+				first = False
+				buf.append(f'{encoding}')
+			buf.append(' ')
+
+	detail = ''
+	if showDiff:
+		del buf[-1]
+		detail = ''.join(buf)
+
+	# prefer assigned character in order
+	cc = assigned[0]
+	return cc, assigned, detail
+
+def buildDBCSIndexTable(indexTable, result, encodingList, showDiff=False):
+	codePage = encodingList[0]
+	diffCount = 0
+	wordCount = 0
+	firstWord = 0
+	lastWord = 0
+
+	for ch in range(128, DBCSCharacterCount):
+		if 0xff < ch < DBCSMinCharacter:
+			continue
+		values = result[ch]
+		diff = {}
+		cc = ccUndefined[0]
+		for value, encoding in zip(values, encodingList, strict=True):
+			if value != ccUndefined:
+				cc = value[0]
+				if value in diff:
+					diff[value].append(encoding)
+				else:
+					diff[value] = [encoding]
+
+		if len(diff) < 2 or (len(diff) == 2 and cjkPrivate in diff and cjkLetter in diff):
+			if cc == CharacterClass.Word:
+				wordCount += 1
+				lastWord = ch
+				if not firstWord:
+					firstWord = ch
+			indexTable[ch] = int(cc)
+			continue
+
+		cc, assigned, detail = getDBCSPreferredClass(diff, showDiff)
+		if cc == CharacterClass.Word:
+			wordCount += 1
+			lastWord = ch
+			if not firstWord:
+				firstWord = ch
+		if len(assigned) > 1:
+			diffCount += 1
+			if showDiff:
+				print(f'{codePage} {ch:04X}: {detail} => {cc.name}')
+		indexTable[ch] = int(cc)
+
+	print(f'{codePage} character diff count: {diffCount}, word count: {wordCount} [{firstWord:04X}, {lastWord:04X}]/{lastWord - firstWord + 1}')
+
+def makeDBCSCharClassifyTable(output, filename, encodingList, isReservedOrUDC=None):
 	result = {}
-
-	for cp in encodingList:
-		decode = codecs.getdecoder(cp)
-		for ch in range(DBCSCharacterCount):
+	for codePage in encodingList:
+		if isinstance(codePage, int):
+			decode = PlatformDecoder(codePage)
+		else:
+			decode = codecs.getdecoder(codePage)
+		for ch in range(128, DBCSCharacterCount):
+			if 0xff < ch < DBCSMinCharacter:
+				continue
 			cc = getDBCSCharClassify(decode, ch, isReservedOrUDC)
 			if ch in result:
 				result[ch].append(cc)
 			else:
 				result[ch] = [cc]
 
-	indexTable = [0] * DBCSCharacterCount
-	for ch in range(DBCSCharacterCount):
-		indexTable[ch] = int(GetPreferredCharacterClass(result[ch]))
+	indexTable = [int(ccUndefined[0])] * DBCSCharacterCount
+	buildDBCSIndexTable(indexTable, result, encodingList)
 
-	suffix = '_' + encodingList[0].upper()
+	codePage = encodingList[0]
+	suffix = f'_CP{codePage}'
 	head = 'CharClassify' + suffix
 
+	table = indexTable[128:256]
+	if codePage == 932:
+		valueBit, totalBit, data = runLengthEncode('CP932High', table)
+		assert valueBit == 3 and totalBit == 8
+		line = dumpArray(data, 20)[0]
+		lines = [f'\t\tconstexpr uint8_t CP932High[] = {{{line}}};']
+		Regenerate(filename, '//CP932High', lines)
+	else:
+		if codePage == 936:
+			assert table[0] == CharacterClass.Punctuation
+			table[0] = 0
+		assert sum(table) == 0, codePage
+
+	# skip all ccUndefined in [256, DBCSMinCharacter - 1]
+	indexTable = indexTable[0x8000:]
 	valueBit, totalBit, data = runLengthEncode(head, indexTable)
 	assert valueBit == 3
-	if encodingList[0] == 'cp1361':
+	if codePage == 1361:
 		#skipBlockEncode(head, indexTable, tableName=head)
 		data = runBlockEncode(head, indexTable, tableName=head)
 		output.extend(data)
@@ -523,14 +614,14 @@ def isReservedOrUDC_GBK(ch, buf):
 	if len(buf) != 2:
 		return False
 
-	ch1 = buf[0]
-	ch2 = buf[1]
+	lead = buf[0]
+	trail = buf[1]
 	# user-defined 1 and 2
-	if ((0xAA <= ch1 <= 0xAF) or (0xF8 <= ch1 <= 0xFE)) \
-		and (0xA1 <= ch2 <= 0xFE):
+	if ((0xAA <= lead <= 0xAF) or (0xF8 <= lead <= 0xFE)) \
+		and (0xA1 <= trail <= 0xFE):
 		return True
 	# user-defined 3
-	if (0xA1 <= ch1 <= 0xA7) and ((0x40 <= ch2 <= 0xA0) and ch2 != 0x7F):
+	if (0xA1 <= lead <= 0xA7) and ((0x40 <= trail <= 0xA0) and trail != 0x7F):
 		return True
 	return False
 
@@ -544,11 +635,11 @@ def isReservedOrUDC_Big5(ch, buf):
 def updateDBCSCharClassifyTable(filename):
 	output = [f"// Created with Python {platform.python_version()}, Unicode {unicodedata.unidata_version}"]
 
-	makeDBCSCharClassifyTable(output, ['cp932', 'shift_jis', 'shift_jis_2004', 'shift_jisx0213'])
-	makeDBCSCharClassifyTable(output, ['cp936', 'gbk'], isReservedOrUDC_GBK)
-	makeDBCSCharClassifyTable(output, ['cp949']) # UHC
-	makeDBCSCharClassifyTable(output, ['cp950', 'big5', 'big5hkscs'], isReservedOrUDC_Big5)
-	makeDBCSCharClassifyTable(output, ['cp1361']) # Johab
+	makeDBCSCharClassifyTable(output, filename, [932, 'cp932', 'shift_jis', 'shift_jis_2004', 'shift_jisx0213'])
+	makeDBCSCharClassifyTable(output, filename, [936, 'cp936', 'gbk'], isReservedOrUDC_GBK)
+	makeDBCSCharClassifyTable(output, filename, [949, 'cp949']) # UHC
+	makeDBCSCharClassifyTable(output, filename, [950, 'cp950', 'big5', 'big5hkscs'], isReservedOrUDC_Big5)
+	makeDBCSCharClassifyTable(output, filename, [1361, 'cp1361']) # Johab
 
 	output.pop()
 	Regenerate(filename, "//dbcs", output)

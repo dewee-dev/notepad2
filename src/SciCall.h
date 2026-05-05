@@ -749,10 +749,6 @@ inline bool SciCall_StyleGetHotSpot(int style) noexcept {
 	return static_cast<bool>(SciCall(SCI_STYLEGETHOTSPOT, style, 0));
 }
 
-inline void SciCall_StyleSetCheckMonospaced(int style, bool checkMonospaced) noexcept {
-	SciCall(SCI_STYLESETCHECKMONOSPACED, style, checkMonospaced);
-}
-
 // Caret, selection, and hotspot styles
 
 inline void SciCall_SetElementColor(int element, COLORREF color) noexcept {
@@ -1234,6 +1230,10 @@ inline void SciCall_LowerCase() noexcept {
 
 inline void SciCall_UpperCase() noexcept {
 	SciCall(SCI_UPPERCASE, 0, 0);
+}
+
+inline void SciCall_CustomCaseMapping(int menu) noexcept {
+	SciCall(SCI_CUSTOMCASEMAPPING, menu, 0);
 }
 
 inline void SciCall_Cancel() noexcept {

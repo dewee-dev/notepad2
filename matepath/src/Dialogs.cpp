@@ -131,23 +131,13 @@ bool GetDirectory(HWND hwndParent, int iTitle, LPWSTR pszFolder, LPCWSTR pszBase
 //
 // GetDirectory2()
 //
-#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
-bool GetDirectory2(HWND hwndParent, int iTitle, LPWSTR pszFolder, REFKNOWNFOLDERID iBase) noexcept
-#else
-bool GetDirectory2(HWND hwndParent, int iTitle, LPWSTR pszFolder, int iBase) noexcept
-#endif
-{
+bool GetDirectory2(HWND hwndParent, int iTitle, LPWSTR pszFolder, REFKNOWNFOLDERID iBase) noexcept {
 	WCHAR szTitle[256];
 	StrCpyEx(szTitle, L"");
 	GetString(iTitle, szTitle, COUNTOF(szTitle));
 
 	PIDLIST_ABSOLUTE pidlRoot;
-#if _WIN32_WINNT >= _WIN32_WINNT_VISTA
-	if (S_OK != SHGetKnownFolderIDList(iBase, KF_FLAG_DEFAULT, nullptr, &pidlRoot))
-#else
-	if (S_OK != SHGetFolderLocation(hwndParent, iBase, nullptr, SHGFP_TYPE_DEFAULT, &pidlRoot))
-#endif
-	{
+	if (S_OK != SHGetKnownFolderIDList(iBase, KF_FLAG_DEFAULT, nullptr, &pidlRoot)) {
 		return false;
 	}
 
@@ -180,15 +170,22 @@ extern WCHAR szCurDir[MAX_PATH + 40];
 //
 //
 extern HWND hwndDirList;
-extern int cxRunDlg;
 extern bool bUseXPFileDialog;
 
 INT_PTR CALLBACK RunDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
 	UNREFERENCED_PARAMETER(lParam);
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP3),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_RUNDESC) | RESIZE_INVALIDATE_RECT,
+		DeferCtlMoveX(IDC_SEARCHEXE),
+		DeferCtlSizeX(IDC_COMMANDLINE),
+	};
 
 	switch (umsg) {
 	case WM_INITDIALOG: {
-		ResizeDlg_InitX(hwnd, cxRunDlg, IDC_RESIZEGRIP3);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxRunDlg, controlDefinition, COUNTOF(controlDefinition));
 		MakeBitmapButton(hwnd, IDC_SEARCHEXE, g_exeInstance, IDB_OPEN_FOLDER16);
 
 		HWND hwndCtl = GetDlgItem(hwnd, IDC_COMMANDLINE);
@@ -207,44 +204,27 @@ INT_PTR CALLBACK RunDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) 
 	return TRUE;
 
 	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxRunDlg, nullptr);
 		DeleteBitmapButton(hwnd, IDC_SEARCHEXE);
 		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(6);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP3, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RUNDESC, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_SEARCHEXE, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_COMMANDLINE, dx, 0, SWP_NOMOVE);
-		EndDeferWindowPos(hdwp);
-		InvalidateRect(GetDlgItem(hwnd, IDC_RUNDESC), nullptr, TRUE);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
 		case IDC_SEARCHEXE: {
 			WCHAR szArgs[MAX_PATH];
 			WCHAR szArg2[MAX_PATH];
-			WCHAR szFile[MAX_PATH * 2];
+			WCHAR szFile[MAX_PATH];
 
 			GetDlgItemText(hwnd, IDC_COMMANDLINE, szArgs, COUNTOF(szArgs));
 			ExtractFirstArgument(szArgs, szFile, szArg2);
-			ExpandEnvironmentStringsEx(szFile, COUNTOF(szFile));
-			ExpandEnvironmentStringsEx(szArg2, COUNTOF(szArg2));
+			if (ExpandEnvironmentStringsEx(szFile, szArgs)) {
+				lstrcpy(szFile, szArgs);
+			}
+			if (ExpandEnvironmentStringsEx(szArg2, szArgs)) {
+				lstrcpy(szArg2, szArgs);
+			}
 
 			WCHAR szTitle[32];
-			WCHAR szFilter[256];
+			auto &szFilter = szArgs;
 			GetString(IDS_SEARCHEXE, szTitle, COUNTOF(szTitle));
 			GetString(IDS_FILTER_EXE, szFilter, COUNTOF(szFilter));
 			PrepareFilterStr(szFilter);
@@ -303,8 +283,12 @@ INT_PTR CALLBACK RunDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) 
 					ExtractFirstArgument(arg1 + 1, arg1, arg2);
 					DisplayPath(arg1, IDS_ERR_CMDLINE);
 				} else {
+					WCHAR args[MAX_PATH];
 					ExtractFirstArgument(arg1, arg1, arg2);
-					ExpandEnvironmentStringsEx(arg2, COUNTOF(arg2));
+					LPWSTR lpParameters = arg2;
+					if (ExpandEnvironmentStringsEx(arg2, args)) {
+						lpParameters = args;
+					}
 
 					SHELLEXECUTEINFO sei;
 					memset(&sei, 0, sizeof(SHELLEXECUTEINFO));
@@ -313,7 +297,7 @@ INT_PTR CALLBACK RunDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) 
 					sei.hwnd = hwnd;
 					sei.lpVerb = nullptr;
 					sei.lpFile = arg1;
-					sei.lpParameters = arg2;
+					sei.lpParameters = lpParameters;
 					sei.lpDirectory = szCurDir;
 					sei.nShow = SW_SHOWNORMAL;
 
@@ -352,12 +336,20 @@ void RunDlg(HWND hwnd) noexcept {
 //
 //
 extern HistoryList mHistory;
-extern int cxGotoDlg;
 
 INT_PTR CALLBACK GotoDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
+	UNREFERENCED_PARAMETER(lParam);
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_GOTO),
+		DeferCtlSizeX(IDC_GOTODESC) | RESIZE_INVALIDATE_RECT,
+	};
+
 	switch (umsg) {
 	case WM_INITDIALOG: {
-		ResizeDlg_InitX(hwnd, cxGotoDlg, IDC_RESIZEGRIP);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxGotoDlg, controlDefinition, COUNTOF(controlDefinition));
 
 		HWND hwndGoto = GetDlgItem(hwnd, IDC_GOTO);
 		ComboBox_LimitText(hwndGoto, MAX_PATH - 1);
@@ -381,31 +373,6 @@ INT_PTR CALLBACK GotoDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam)
 		CenterDlgInParent(hwnd);
 	}
 	return TRUE;
-
-	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxGotoDlg, nullptr);
-		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-
-		HDWP hdwp = BeginDeferWindowPos(5);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_GOTO, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_GOTODESC, dx, 0, SWP_NOMOVE);
-		EndDeferWindowPos(hdwp);
-
-		InvalidateRect(GetDlgItem(hwnd, IDC_GOTODESC), nullptr, TRUE);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -512,11 +479,7 @@ INT_PTR CALLBACK AboutDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam
 		SetDlgItemText(hwnd, IDC_VERSION, VERSION_FILEVERSION_LONG);
 		SetDlgItemText(hwnd, IDC_BUILD_INFO, wch);
 
-		HFONT hFontTitle = AsPointer<HFONT>(SendDlgItemMessage(hwnd, IDC_VERSION, WM_GETFONT, 0, 0));
-		if (hFontTitle == nullptr) {
-			hFontTitle = GetStockFont(DEFAULT_GUI_FONT);
-		}
-
+		HFONT hFontTitle = GetWindowFont(hwnd);
 		LOGFONT lf;
 		GetObject(hFontTitle, sizeof(LOGFONT), &lf);
 		lf.lfWeight = FW_BOLD;
@@ -631,12 +594,8 @@ static INT_PTR CALLBACK GeneralPageProc(HWND hwnd, UINT umsg, WPARAM wParam, LPA
 
 	switch (umsg) {
 	case WM_INITDIALOG:
-		if (StrNotEmpty(szIniFile)) {
-			if (bSaveSettings) {
-				CheckDlgButton(hwnd, IDC_SAVESETTINGS, BST_CHECKED);
-			}
-		} else {
-			EnableWindow(GetDlgItem(hwnd, IDC_SAVESETTINGS), FALSE);
+		if (bSaveSettings) {
+			CheckDlgButton(hwnd, IDC_SAVESETTINGS, BST_CHECKED);
 		}
 
 		if (bOpenFileInSameWindow) {
@@ -1274,7 +1233,6 @@ extern int nIdFocus;
 
 extern WCHAR tchFilter[128];
 extern bool bNegFilter;
-extern int cxFileFilterDlg;
 
 INT_PTR OptionsPropSheet(HWND hwnd, HINSTANCE hInstance) noexcept {
 	PROPSHEETHEADER psh;
@@ -1372,10 +1330,17 @@ INT_PTR OptionsPropSheet(HWND hwnd, HINSTANCE hInstance) noexcept {
 //
 INT_PTR CALLBACK GetFilterDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
 	UNREFERENCED_PARAMETER(lParam);
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP3),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlMoveX(IDC_BROWSEFILTER),
+		DeferCtlSizeX(IDC_FILTER),
+	};
 
 	switch (umsg) {
 	case WM_INITDIALOG: {
-		ResizeDlg_InitX(hwnd, cxFileFilterDlg, IDC_RESIZEGRIP3);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxFileFilterDlg, controlDefinition, COUNTOF(controlDefinition));
 		MakeBitmapButton(hwnd, IDC_BROWSEFILTER, nullptr, OBM_COMBO);
 
 		HWND hwndCtl = GetDlgItem(hwnd, IDC_FILTER);
@@ -1389,27 +1354,8 @@ INT_PTR CALLBACK GetFilterDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lP
 	return TRUE;
 
 	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxFileFilterDlg, nullptr);
 		DeleteBitmapButton(hwnd, IDC_BROWSEFILTER);
 		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(5);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP3, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_BROWSEFILTER, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_FILTER, dx, 0, SWP_NOMOVE);
-		EndDeferWindowPos(hdwp);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -1422,7 +1368,7 @@ INT_PTR CALLBACK GetFilterDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lP
 
 			IniSectionParser section;
 			WCHAR *pIniSectionBuf = static_cast<WCHAR *>(NP2HeapAlloc(sizeof(WCHAR) * MAX_INI_SECTION_SIZE_FILTERS));
-			const DWORD cchIniSection = static_cast<DWORD>(NP2HeapSize(pIniSectionBuf) / sizeof(WCHAR));
+			constexpr DWORD cchIniSection = MAX_INI_SECTION_SIZE_FILTERS;
 			section.Init(128);
 
 			LoadIniSection(INI_SECTION_NAME_FILTERS, pIniSectionBuf, cchIniSection);
@@ -1536,17 +1482,24 @@ struct FILEOPDLGDATA {
 	UINT wFunc;
 };
 
-extern int cxRenameFileDlg;
 //=============================================================================
 //
 //  RenameFileDlgProc()
 //
 //
 INT_PTR CALLBACK RenameFileDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP2),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_OLDNAME),
+		DeferCtlSizeX(IDC_NEWNAME),
+	};
+
 	switch (umsg) {
 	case WM_INITDIALOG: {
 		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
-		ResizeDlg_InitX(hwnd, cxRenameFileDlg, IDC_RESIZEGRIP2);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxRenameFileDlg, controlDefinition, COUNTOF(controlDefinition));
 		const FILEOPDLGDATA * const lpfod = AsPointer<const FILEOPDLGDATA *>(lParam);
 
 		SetDlgItemText(hwnd, IDC_OLDNAME, lpfod->szSource);
@@ -1559,28 +1512,6 @@ INT_PTR CALLBACK RenameFileDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 		CenterDlgInParent(hwnd);
 	}
 	return TRUE;
-
-	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxRenameFileDlg, nullptr);
-		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(5);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP2, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_OLDNAME, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_NEWNAME, dx, 0, SWP_NOMOVE);
-		EndDeferWindowPos(hdwp);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -1669,14 +1600,22 @@ bool RenameFileDlg(HWND hwnd) {
 //  CopyMoveDlgProc()
 //
 //
-extern int cxCopyMoveDlg;
-
 INT_PTR CALLBACK CopyMoveDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP5),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlMoveX(IDC_EMPTY_MRU),
+		DeferCtlSizeX(IDC_SOURCE),
+		DeferCtlSizeX(IDC_DESTINATION),
+		DeferCtlMoveX(IDC_BROWSEDESTINATION),
+	};
+
 	switch (umsg) {
 	case WM_INITDIALOG: {
 		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
 
-		ResizeDlg_InitX(hwnd, cxCopyMoveDlg, IDC_RESIZEGRIP5);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxCopyMoveDlg, controlDefinition, COUNTOF(controlDefinition));
 		MakeBitmapButton(hwnd, IDC_BROWSEDESTINATION, g_exeInstance, IDB_OPEN_FOLDER16);
 
 		const FILEOPDLGDATA * const lpfod = AsPointer<const FILEOPDLGDATA *>(lParam);
@@ -1705,29 +1644,8 @@ INT_PTR CALLBACK CopyMoveDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lPa
 	return TRUE;
 
 	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxCopyMoveDlg, nullptr);
 		DeleteBitmapButton(hwnd, IDC_BROWSEDESTINATION);
 		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(7);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP5, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_EMPTY_MRU, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_SOURCE, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_DESTINATION, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_BROWSEDESTINATION, dx, 0, SWP_NOSIZE);
-		EndDeferWindowPos(hdwp);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_NOTIFY: {
 		LPNMHDR pnmhdr = AsPointer<LPNMHDR>(lParam);
@@ -1753,10 +1671,14 @@ INT_PTR CALLBACK CopyMoveDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lPa
 
 		case IDC_BROWSEDESTINATION: {
 			WCHAR tch[MAX_PATH];
+			WCHAR tchDestination[MAX_PATH];
 			GetDlgItemText(hwnd, IDC_DESTINATION, tch, COUNTOF(tch));
-			ExpandEnvironmentStringsEx(tch, COUNTOF(tch));
-			if (GetDirectory(hwnd, IDS_COPYMOVE, tch, tch)) {
-				SetDlgItemText(hwnd, IDC_DESTINATION, tch);
+			LPWSTR pszNewDir = tch;
+			if (ExpandEnvironmentStringsEx(tch, tchDestination)) {
+				pszNewDir = tchDestination;
+			}
+			if (GetDirectory(hwnd, IDS_COPYMOVE, pszNewDir, pszNewDir)) {
+				SetDlgItemText(hwnd, IDC_DESTINATION, pszNewDir);
 			}
 			PostMessage(hwnd, WM_NEXTDLGCTL, TRUE, FALSE);
 		}
@@ -1824,13 +1746,16 @@ bool CopyMoveDlg(HWND hwnd, UINT *wFunc) {
 		// Save item
 		mru.Add(fod.szDestination);
 		mru.Save();
-		ExpandEnvironmentStringsEx(fod.szDestination, COUNTOF(fod.szDestination));
 
 		// Double null terminated strings are essential!!!
 		memset(tchSource, 0, sizeof(tchSource));
 		memset(tchDestination, 0, sizeof(tchDestination));
 		lstrcpy(tchSource, dli.szFileName);
-		lstrcpy(tchDestination, fod.szDestination);
+		if (ExpandEnvironmentStringsEx(fod.szDestination, tchDestination)) {
+			lstrcpy(fod.szDestination, tchDestination);
+		} else {
+			lstrcpy(tchDestination, fod.szDestination);
+		}
 
 		// tchDestination is always assumed to be a directory
 		// if it doesn't exist, the file name of tchSource is added
@@ -1866,15 +1791,20 @@ bool CopyMoveDlg(HWND hwnd, UINT *wFunc) {
 extern WCHAR tchOpenWithDir[MAX_PATH];
 extern bool flagNoFadeHidden;
 
-extern int cxOpenWithDlg;
-extern int cyOpenWithDlg;
-extern int cxNewDirectoryDlg;
-
 INT_PTR CALLBACK OpenWithDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMove(IDC_RESIZEGRIP3),
+		DeferCtlMove(IDOK),
+		DeferCtlMove(IDCANCEL),
+		DeferCtlSize(IDC_OPENWITHDIR) | RESIZE_AUTOSIZE_USEHEADER,
+		DeferCtlMoveY(IDC_GETOPENWITHDIR),
+		DeferCtlMoveYSizeX(IDC_OPENWITHDESCR) | RESIZE_INVALIDATE_RECT,
+	};
+
 	switch (umsg) {
 	case WM_INITDIALOG: {
 		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
-		ResizeDlg_Init(hwnd, cxOpenWithDlg, cyOpenWithDlg, IDC_RESIZEGRIP3);
+		ResizeDlg_Init(hwnd, &positionRecord.cxOpenWithDlg, &positionRecord.cyOpenWithDlg, controlDefinition, COUNTOF(controlDefinition));
 
 		HWND hwndLV = GetDlgItem(hwnd, IDC_OPENWITHDIR);
 		InitWindowCommon(hwndLV);
@@ -1900,32 +1830,7 @@ INT_PTR CALLBACK OpenWithDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lPa
 	case WM_DESTROY:
 		DirList_Destroy(GetDlgItem(hwnd, IDC_OPENWITHDIR));
 		DeleteBitmapButton(hwnd, IDC_GETOPENWITHDIR);
-		ResizeDlg_Destroy(hwnd, &cxOpenWithDlg, &cyOpenWithDlg);
 		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-		int dy;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, &dy);
-
-		HDWP hdwp = BeginDeferWindowPos(6);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP3, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_OPENWITHDIR, dx, dy, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_GETOPENWITHDIR, 0, dy, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_OPENWITHDESCR, 0, dy, SWP_NOSIZE);
-		EndDeferWindowPos(hdwp);
-
-		ResizeDlgCtl(hwnd, IDC_OPENWITHDESCR, dx, 0);
-		ListView_SetColumnWidth(GetDlgItem(hwnd, IDC_OPENWITHDIR), 0, LVSCW_AUTOSIZE_USEHEADER);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_NOTIFY: {
 		LPNMHDR pnmh = AsPointer<LPNMHDR>(lParam);
@@ -2065,36 +1970,22 @@ bool OpenWithDlg(HWND hwnd, const DirListItem *lpdliParam) {
 //
 //
 INT_PTR CALLBACK NewDirDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_NEWDIR),
+	};
+
 	switch (umsg) {
 	case WM_INITDIALOG: {
 		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
-		ResizeDlg_InitX(hwnd, cxNewDirectoryDlg, IDC_RESIZEGRIP);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxNewDirectoryDlg, controlDefinition, COUNTOF(controlDefinition));
 
 		SendDlgItemMessage(hwnd, IDC_NEWDIR, EM_LIMITTEXT, MAX_PATH - 1, 0);
 		CenterDlgInParent(hwnd);
 	}
 	return TRUE;
-
-	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxNewDirectoryDlg, nullptr);
-		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(4);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_NEWDIR, dx, 0, SWP_NOMOVE);
-		EndDeferWindowPos(hdwp);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -2141,9 +2032,16 @@ bool NewDirDlg(HWND hwnd, LPWSTR pszNewDir) noexcept {
 //  Find target window helper dialog
 //
 extern bool flagPortableMyDocs;
-extern int cxFindWindowDlg;
 
 static INT_PTR CALLBACK FindWinDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP5),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_FINDWINDESC) | RESIZE_INVALIDATE_RECT,
+		DeferCtlSizeX(IDC_WINTITLE),
+	};
+
 	static HICON hIconCross1;
 	static HICON hIconCross2;
 	static HCURSOR hCursorCross;
@@ -2152,32 +2050,13 @@ static INT_PTR CALLBACK FindWinDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPAR
 	switch (umsg) {
 	case WM_INITDIALOG:
 		SetWindowLongPtr(hwnd, DWLP_USER, lParam);
-		ResizeDlg_InitX(hwnd, cxFindWindowDlg, IDC_RESIZEGRIP5);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxFindWindowDlg, controlDefinition, COUNTOF(controlDefinition));
 
 		hIconCross1 = LoadIcon(g_exeInstance, MAKEINTRESOURCE(IDI_CROSS1));
 		hIconCross2 = LoadIcon(g_exeInstance, MAKEINTRESOURCE(IDI_CROSS2));
 		hCursorCross = LoadCursor(g_exeInstance, MAKEINTRESOURCE(IDC_CROSSHAIR));
 		CenterDlgInParent(hwnd);
 		bHasCapture = false;
-		return TRUE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(5);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP5, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_FINDWINDESC, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_WINTITLE, dx, 0, SWP_NOMOVE);
-		EndDeferWindowPos(hdwp);
-		InvalidateRect(GetDlgItem(hwnd, IDC_FINDWINDESC), nullptr, TRUE);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
 		return TRUE;
 
 	case WM_CANCELMODE:
@@ -2255,9 +2134,10 @@ static INT_PTR CALLBACK FindWinDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPAR
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
 		case IDOK: {
-			WCHAR tch[MAX_PATH] = L"";
+			WCHAR tch[MAX_PATH];
+			SetStrEmpty(tch);
 			if (GetDlgItemText(hwnd, IDC_WINMODULE, tch, COUNTOF(tch))) {
-				PathRelativeToApp(tch, tch, 0, true, flagPortableMyDocs);
+				PathRelativeToApp(tch, tch, 0, flagPortableMyDocs);
 				PathQuoteSpaces(tch);
 				SetDlgItemText(GetParent(hwnd), IDC_TARGETPATH, tch);
 			}
@@ -2277,7 +2157,6 @@ static INT_PTR CALLBACK FindWinDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPAR
 		return TRUE;
 
 	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxFindWindowDlg, nullptr);
 		if (bHasCapture) {
 			ReleaseCapture();
 			SendMessage(hwnd, WM_LBUTTONUP, 0, 0);
@@ -2299,7 +2178,6 @@ static INT_PTR CALLBACK FindWinDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPAR
 //
 extern UseTargetApplication iUseTargetApplication;
 extern TargetApplicationMode iTargetApplicationMode;
-extern int cxTargetApplicationDlg;
 extern bool bLoadLaunchSetingsLoaded;
 extern WCHAR szTargetApplication[MAX_PATH];
 extern WCHAR szTargetApplicationParams[MAX_PATH];
@@ -2310,12 +2188,23 @@ extern WCHAR szDDETopic[256];
 
 INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM lParam) noexcept {
 	UNREFERENCED_PARAMETER(lParam);
+	static const DWORD controlDefinition[] = {
+		DeferCtlMoveX(IDC_RESIZEGRIP4),
+		DeferCtlMoveX(IDOK),
+		DeferCtlMoveX(IDCANCEL),
+		DeferCtlSizeX(IDC_TARGETPATH),
+		DeferCtlMoveX(IDC_BROWSE),
+		DeferCtlMoveX(IDC_FINDWIN),
+		DeferCtlSizeX(IDC_DDEMSG),
+		DeferCtlSizeX(IDC_DDEAPP),
+		DeferCtlSizeX(IDC_DDETOPIC),
+	};
 
 	static WCHAR szTargetWndClass[256] = L"";
 
 	switch (umsg) {
 	case WM_INITDIALOG: {
-		ResizeDlg_InitX(hwnd, cxTargetApplicationDlg, IDC_RESIZEGRIP4);
+		ResizeDlg_InitX(hwnd, &positionRecord.cxTargetApplicationDlg, controlDefinition, COUNTOF(controlDefinition));
 		// ToolTip for browse button
 		HWND hwndToolTip = CreateWindowEx(0, TOOLTIPS_CLASS, nullptr, 0, 0, 0, 0, 0, hwnd, nullptr, g_hInstance, nullptr);
 
@@ -2387,31 +2276,9 @@ INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 	return TRUE;
 
 	case WM_DESTROY:
-		ResizeDlg_Destroy(hwnd, &cxTargetApplicationDlg, nullptr);
 		DeleteBitmapButton(hwnd, IDC_BROWSE);
 		//DeleteBitmapButton(hwnd, IDC_FINDWIN);
 		return FALSE;
-
-	case WM_SIZE: {
-		int dx;
-
-		ResizeDlg_Size(hwnd, lParam, &dx, nullptr);
-		HDWP hdwp = BeginDeferWindowPos(8);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_RESIZEGRIP4, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDOK, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDCANCEL, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_TARGETPATH, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_BROWSE, dx, 0, SWP_NOSIZE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_DDEMSG, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_DDEAPP, dx, 0, SWP_NOMOVE);
-		hdwp = DeferCtlPos(hdwp, hwnd, IDC_DDETOPIC, dx, 0, SWP_NOMOVE);
-		EndDeferWindowPos(hdwp);
-	}
-	return TRUE;
-
-	case WM_GETMINMAXINFO:
-		ResizeDlg_GetMinMaxInfo(hwnd, lParam);
-		return TRUE;
 
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
@@ -2422,7 +2289,7 @@ INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 
 			GetDlgItemText(hwnd, IDC_TARGETPATH, tchBuf, COUNTOF(tchBuf));
 			ExtractFirstArgument(tchBuf, szFile, szParams);
-			PathAbsoluteFromApp(szFile, szFile, true);
+			PathAbsoluteFromApp(szFile, szFile);
 
 			WCHAR szTitle[32];
 			WCHAR szFilter[256];
@@ -2448,7 +2315,7 @@ INT_PTR CALLBACK FindTargetDlgProc(HWND hwnd, UINT umsg, WPARAM wParam, LPARAM l
 			// execute file open dlg
 			if (GetOpenFileName(&ofn)) {
 				lstrcpy(tchBuf, szFile);
-				PathRelativeToApp(tchBuf, tchBuf, 0, true, flagPortableMyDocs);
+				PathRelativeToApp(tchBuf, tchBuf, 0, flagPortableMyDocs);
 				PathQuoteSpaces(tchBuf);
 				if (StrNotEmpty(szParams)) {
 					StrCatBuff(tchBuf, L" ", COUNTOF(tchBuf));

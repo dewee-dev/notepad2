@@ -634,14 +634,6 @@ void ScintillaCall::StyleSetHotSpot(int style, bool hotspot) {
 	Call(Message::StyleSetHotSpot, style, hotspot);
 }
 
-void ScintillaCall::StyleSetCheckMonospaced(int style, bool checkMonospaced) {
-	Call(Message::StyleSetCheckMonospaced, style, checkMonospaced);
-}
-
-bool ScintillaCall::StyleGetCheckMonospaced(int style) {
-	return Call(Message::StyleGetCheckMonospaced, style);
-}
-
 void ScintillaCall::StyleSetStretch(int style, Scintilla::FontStretch stretch) {
 	Call(Message::StyleSetStretch, style, static_cast<intptr_t>(stretch));
 }
@@ -2026,6 +2018,10 @@ void ScintillaCall::UpperCase() {
 	Call(Message::UpperCase);
 }
 
+void ScintillaCall::CustomCaseMapping(int menu) {
+	Call(Message::CustomCaseMapping, menu);
+}
+
 void ScintillaCall::LineScrollDown() {
 	Call(Message::LineScrollDown);
 }
@@ -3264,6 +3260,14 @@ Line ScintillaCall::LineFromIndexPosition(Position pos, Scintilla::LineCharacter
 
 Position ScintillaCall::IndexPositionFromLine(Line line, Scintilla::LineCharacterIndexType lineCharacterIndex) {
 	return Call(Message::IndexPositionFromLine, line, static_cast<intptr_t>(lineCharacterIndex));
+}
+
+bool ScintillaCall::DragDropEnabled() {
+	return Call(Message::GetDragDropEnabled);
+}
+
+void ScintillaCall::SetDragDropEnabled(bool dragDropEnabled) {
+	Call(Message::SetDragDropEnabled, dragDropEnabled);
 }
 
 void ScintillaCall::StartRecord() {

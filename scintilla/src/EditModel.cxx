@@ -121,9 +121,15 @@ EditModel::EditModel() :
 	pdoc = new Document(DocumentOption::StylesNone);
 	pdoc->AddRef();
 
+#if _WIN32_WINNT >= _WIN32_WINNT_WIN7
+	// support more than 64 processors on Windows 11, Windows Server 2022 and later system
+	// https://learn.microsoft.com/en-us/windows/win32/procthread/processor-groups
+	hardwareConcurrency = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+#else
 	SYSTEM_INFO info;
 	GetNativeSystemInfo(&info);
 	hardwareConcurrency = info.dwNumberOfProcessors;
+#endif
 	idleTaskTimer = CreateWaitableTimer(nullptr, true, nullptr);
 	SetIdleTaskTime(IdleLineWrapTime);
 	UpdateParallelLayoutThreshold();
@@ -169,6 +175,10 @@ const char *EditModel::GetFoldDisplayText(Sci::Line lineDoc, bool partialLine) c
 InSelection EditModel::LineEndInSelection(Sci::Line lineDoc) const noexcept {
 	const Sci::Position posAfterLineEnd = pdoc->LineStart(lineDoc + 1);
 	return sel.InSelectionForEOL(posAfterLineEnd);
+}
+
+Sci::Position EditModel::VirtualSpaceForLine(Sci::Line lineDoc) const noexcept {
+	return sel.VirtualSpaceFor(pdoc->LineEnd(lineDoc));
 }
 
 MarkerMask EditModel::GetMark(Sci::Line line) const noexcept {

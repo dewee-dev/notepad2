@@ -264,7 +264,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <ClCompile>
-      <PreprocessorDefinitions>_DEBUG;_WIN64;_WIN32_WINNT=0x0A00;WINVER=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_WIN64;_WIN32_WINNT=0x0A00;WINVER=0x0A00;PopulationCount64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>gdi32.lib;comdlg32.lib;advapi32.lib;shell32.lib;ole32.lib;oleaut32.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -397,7 +397,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <ClCompile>
-      <PreprocessorDefinitions>NDEBUG;_WIN64;_WIN32_WINNT=0x0A00;WINVER=0x0A00;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_WIN64;_WIN32_WINNT=0x0A00;WINVER=0x0A00;PopulationCount64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
       <AdditionalOptions>/GA /Zc:threadSafeInit- /wd26429 /wd26446 /wd26472 /wd26481 /wd26482 /wd26485 /wd26486 /wd26489 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -480,6 +480,7 @@
     <ClCompile Include="..\..\scintilla\lexers\LexD.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexDart.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexDiff.cxx" />
+    <ClCompile Include="..\..\scintilla\lexers\LexErlang.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexFortran.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexFSharp.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexGN.cxx" />
@@ -511,6 +512,7 @@
     <ClCompile Include="..\..\scintilla\lexers\LexPascal.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexPerl.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexPHP.cxx" />
+    <ClCompile Include="..\..\scintilla\lexers\LexPowerBuilder.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexPowerShell.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexProps.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexPython.cxx" />
@@ -526,6 +528,7 @@
     <ClCompile Include="..\..\scintilla\lexers\LexTCL.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexTexinfo.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexTOML.cxx" />
+    <ClCompile Include="..\..\scintilla\lexers\LexTypst.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexVB.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexVerilog.cxx" />
     <ClCompile Include="..\..\scintilla\lexers\LexVHDL.cxx" />
@@ -611,6 +614,8 @@
     <ClCompile Include="..\..\src\EditLexers\stlD.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlDart.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlDefault.cpp" />
+    <ClCompile Include="..\..\src\EditLexers\stlElixir.cpp" />
+    <ClCompile Include="..\..\src\EditLexers\stlErlang.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlFortran.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlFSharp.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlGo.cpp" />
@@ -642,6 +647,7 @@
     <ClCompile Include="..\..\src\EditLexers\stlPascal.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlPerl.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlPHP.cpp" />
+    <ClCompile Include="..\..\src\EditLexers\stlPowerBuilder.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlPowerShell.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlPython.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlR.cpp" />
@@ -658,6 +664,7 @@
     <ClCompile Include="..\..\src\EditLexers\stlTexinfo.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlTOML.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlTypeScript.cpp" />
+    <ClCompile Include="..\..\src\EditLexers\stlTypst.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlVB.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlVBS.cpp" />
     <ClCompile Include="..\..\src\EditLexers\stlVerilog.cpp" />

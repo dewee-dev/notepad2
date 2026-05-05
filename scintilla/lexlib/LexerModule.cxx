@@ -49,6 +49,7 @@ extern const LexerModule lmCSV;
 extern const LexerModule lmDart;
 extern const LexerModule lmDiff;
 extern const LexerModule lmDLang;
+extern const LexerModule lmErlang;
 extern const LexerModule lmFortran;
 extern const LexerModule lmFSharp;
 extern const LexerModule lmGN;
@@ -80,6 +81,7 @@ extern const LexerModule lmOCaml;
 extern const LexerModule lmPascal;
 extern const LexerModule lmPerl;
 extern const LexerModule lmPHPScript;
+extern const LexerModule lmPowerBuilder;
 extern const LexerModule lmPowerShell;
 extern const LexerModule lmProps;
 extern const LexerModule lmPython;
@@ -95,6 +97,7 @@ extern const LexerModule lmSwift;
 extern const LexerModule lmTCL;
 extern const LexerModule lmTexinfo;
 extern const LexerModule lmTOML;
+extern const LexerModule lmTypst;
 extern const LexerModule lmVerilog;
 extern const LexerModule lmVHDL;
 extern const LexerModule lmVim;
@@ -133,6 +136,7 @@ const LexerModule * const lexerCatalogue[] = {
 	&lmDart,
 	&lmDiff,
 	&lmDLang,
+	&lmErlang,
 	&lmFortran,
 	&lmFSharp,
 	&lmGN,
@@ -164,6 +168,7 @@ const LexerModule * const lexerCatalogue[] = {
 	&lmPascal,
 	&lmPerl,
 	&lmPHPScript,
+	&lmPowerBuilder,
 	&lmPowerShell,
 	&lmProps,
 	&lmPython,
@@ -179,6 +184,7 @@ const LexerModule * const lexerCatalogue[] = {
 	&lmTCL,
 	&lmTexinfo,
 	&lmTOML,
+	&lmTypst,
 	&lmVerilog,
 	&lmVHDL,
 	&lmVim,

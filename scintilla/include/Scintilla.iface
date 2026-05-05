@@ -202,9 +202,11 @@ set void SetViewWS=2021(WhiteSpace viewWS,)
 enu TabDrawMode=SCTD_
 val SCTD_LONGARROW=0
 val SCTD_STRIKEOUT=1
+val SCTD_CONTROLCHAR=2
 
 ali SCTD_LONGARROW=LONG_ARROW
 ali SCTD_STRIKEOUT=STRIKE_OUT
+ali SCTD_CONTROLCHAR=CONTROL_CHAR
 
 # Retrieve the current tab draw mode.
 # Returns one of SCTD_* constants.
@@ -541,6 +543,7 @@ get int GetMargins=2253(,)
 enu StylesCommon=STYLE_
 val STYLE_DEFAULT=0
 val STYLE_LINENUMBER=32
+val STYLE_LINK=33
 val STYLE_BRACELIGHT=34
 val STYLE_BRACEBAD=35
 val STYLE_CONTROLCHAR=36
@@ -715,10 +718,10 @@ set void StyleSetCharacterSet=2066(int style, CharacterSet characterSet)
 set void StyleSetHotSpot=2409(int style, bool hotspot)
 
 # Indicate that a style may be monospaced over ASCII graphics characters which enables optimizations.
-set void StyleSetCheckMonospaced=2254(int style, bool checkMonospaced)
+#set void StyleSetCheckMonospaced=2254(int style, bool checkMonospaced)
 
 # Get whether a style may be monospaced.
-get bool StyleGetCheckMonospaced=2255(int style,)
+#get bool StyleGetCheckMonospaced=2255(int style,)
 
 enu FontStretch=SC_STRETCH_
 val SC_STRETCH_ULTRA_CONDENSED=1
@@ -961,6 +964,7 @@ val INDIC_POINT_TOP=22
 #val INDIC_MAX=35
 
 enu IndicatorNumbers=INDICATOR_
+val INDICATOR_LINK=7
 val INDICATOR_CONTAINER=8
 val INDICATOR_IME=32
 val INDICATOR_IME_MAX=35
@@ -2151,6 +2155,9 @@ fun void LowerCase=2340(,)
 # Transform the selection to upper case.
 fun void UpperCase=2341(,)
 
+# Transform the selection to custom case.
+fun void CustomCaseMapping=2139(int menu,)
+
 # Scroll the document down, keeping the caret visible.
 fun void LineScrollDown=2342(,)
 
@@ -3329,6 +3336,12 @@ fun line LineFromIndexPosition=2713(position pos, LineCharacterIndexType lineCha
 
 # Retrieve the position measured in index units at the start of a document line.
 fun position IndexPositionFromLine=2714(line line, LineCharacterIndexType lineCharacterIndex)
+
+# Get whether drag-and-drop is enabled or disabled
+get bool GetDragDropEnabled=2818(,)
+
+# Enable or disable drag-and-drop
+set void SetDragDropEnabled=2819(bool dragDropEnabled,)
 
 # Start notifying the container of all key presses and commands.
 fun void StartRecord=3001(,)

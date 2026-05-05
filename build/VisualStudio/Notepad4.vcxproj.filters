@@ -102,6 +102,9 @@
     <ClCompile Include="..\..\scintilla\lexers\LexFortran.cxx">
       <Filter>Scintilla\lexers</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\scintilla\lexers\LexErlang.cxx">
+      <Filter>Scintilla\lexers</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\scintilla\lexers\LexFSharp.cxx">
       <Filter>Scintilla\lexers</Filter>
     </ClCompile>
@@ -192,6 +195,9 @@
     <ClCompile Include="..\..\scintilla\lexers\LexPHP.cxx">
       <Filter>Scintilla\lexers</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\scintilla\lexers\LexPowerBuilder.cxx">
+      <Filter>Scintilla\lexers</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\scintilla\lexers\LexPowerShell.cxx">
       <Filter>Scintilla\lexers</Filter>
     </ClCompile>
@@ -235,6 +241,9 @@
       <Filter>Scintilla\lexers</Filter>
     </ClCompile>
     <ClCompile Include="..\..\scintilla\lexers\LexTOML.cxx">
+      <Filter>Scintilla\lexers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\scintilla\lexers\LexTypst.cxx">
       <Filter>Scintilla\lexers</Filter>
     </ClCompile>
     <ClCompile Include="..\..\scintilla\lexers\LexVB.cxx">
@@ -492,6 +501,12 @@
     <ClCompile Include="..\..\src\EditLexers\stlDefault.cpp">
       <Filter>Source Files\EditLexers</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\EditLexers\stlElixir.cpp">
+      <Filter>Source Files\EditLexers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\EditLexers\stlErlang.cpp">
+      <Filter>Source Files\EditLexers</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\EditLexers\stlFortran.cpp">
       <Filter>Source Files\EditLexers</Filter>
     </ClCompile>
@@ -585,6 +600,9 @@
     <ClCompile Include="..\..\src\EditLexers\stlPHP.cpp">
       <Filter>Source Files\EditLexers</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\src\EditLexers\stlPowerBuilder.cpp">
+      <Filter>Source Files\EditLexers</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\src\EditLexers\stlPowerShell.cpp">
       <Filter>Source Files\EditLexers</Filter>
     </ClCompile>
@@ -631,6 +649,9 @@
       <Filter>Source Files\EditLexers</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\EditLexers\stlTypeScript.cpp">
+      <Filter>Source Files\EditLexers</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\EditLexers\stlTypst.cpp">
       <Filter>Source Files\EditLexers</Filter>
     </ClCompile>
     <ClCompile Include="..\..\src\EditLexers\stlVB.cpp">

@@ -31,6 +31,9 @@ lexerList = [
 	('NP2LEX_DART', 'stlDart.cpp', 'LexDart.cxx', 'Dart.dart', 0, parse_dart_api_file),
 	('NP2LEX_DIFF', 'stlDefault.cpp', 'LexDiff.cxx', '', (0, 'Diff'), None),
 
+	('NP2LEX_ELIXIR', 'stlElixir.cpp', 'LexErlang.cxx', 'Elixir.ex', 0, parse_elixir_api_file),
+	('NP2LEX_ERLANG', 'stlErlang.cpp', 'LexErlang.cxx', 'Erlang.erl', 0, parse_erlang_api_file),
+
 	('NP2LEX_FORTRAN', 'stlFortran.cpp', 'LexFortran.cxx', 'Fortran.f', 0, parse_fortran_api_file),
 
 	('NP2LEX_GN', 'stlGN.cpp', 'LexGN.cxx', 'GN.gn', 0, parse_gn_api_file),
@@ -74,6 +77,7 @@ lexerList = [
 	('NP2LEX_PASCAL', 'stlPascal.cpp', 'LexPascal.cxx', '', 0, None),
 	('NP2LEX_PERL', 'stlPerl.cpp', 'LexPerl.cxx', 'Perl.pl', 0, parse_perl_api_file),
 	('NP2LEX_PHP', 'stlPHP.cpp', 'LexPHP.cxx', 'PHP.php', 1, parse_php_api_file),
+	('NP2LEX_POWERBUILDER', 'stlPowerBuilder.cpp', 'LexPowerBuilder.cxx', 'PowerBuilder.srf', 0, parse_powerbuilder_api_file),
 	('NP2LEX_POWERSHELL', 'stlPowerShell.cpp', 'LexPowerShell.cxx', 'PowerShell.ps1', 0, parse_powershell_api_file),
 	('NP2LEX_PYTHON', 'stlPython.cpp', 'LexPython.cxx', 'Python.py', 0, parse_python_api_file),
 
@@ -100,6 +104,7 @@ lexerList = [
 	('NP2LEX_TCL', 'stlTcl.cpp', 'LexTCL.cxx', '', 0, None),
 	('NP2LEX_TEXINFO', 'stlTexinfo.cpp', 'LexTexinfo.cxx', 'Texinfo.texi', 0, parse_texinfo_api_file),
 	('NP2LEX_TOML', 'stlTOML.cpp', 'LexTOML.cxx', '', 0, parse_toml_api_file),
+	('NP2LEX_TYPST', 'stlTypst.cpp', 'LexTypst.cxx', 'Typst.typ', 0, parse_typst_api_file),
 
 	('NP2LEX_VBSCRIPT', 'stlVBS.cpp', 'LexVB.cxx', ['VBScript.vbs'], 0, parse_visual_basic_api_file),
 	('NP2LEX_VERILOG', 'stlVerilog.cpp', 'LexVerilog.cxx', ['Verilog.v', 'SystemVerilog.sv'], 0, parse_verilog_api_file),

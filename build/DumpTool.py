@@ -7,7 +7,7 @@ import re
 def dump_static_linked_function(path, dumpAll=True):
 	result = {}
 	with open(path, encoding='utf-8') as fd:
-		for line in fd.readlines():
+		for line in fd:
 			if line.count(':') > 1:
 				items = line.split()
 				func = items[1]
@@ -51,7 +51,7 @@ mov_eax = re.compile(r'mov\s+eax\s*,\s*(\d+)')
 call_chkstk = re.compile(r'call\s+_?_?chkstk')
 
 def get_stack_size(path, result_map, threshold):
-	with open(path, 'r', encoding='cp1252') as fd:
+	with open(path, encoding='cp1252') as fd:
 		doc = fd.read()
 	segmentList = text_segment.split(doc)
 	path = os.path.basename(path)

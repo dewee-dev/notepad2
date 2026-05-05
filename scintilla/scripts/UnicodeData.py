@@ -1,6 +1,7 @@
 import sys
 import os.path
 import unicodedata
+import ctypes
 
 # Common References for Unicode Standard Annexes
 # https://www.unicode.org/reports/tr41/
@@ -14,10 +15,67 @@ import unicodedata
 MaxCharacter = sys.maxunicode
 UnicodeCharacterCount = sys.maxunicode + 1
 BMPCharacterCharacterCount = 0xffff + 1
+
 DBCSCharacterCount = 0xffff + 1
+DBCSMinCharacter = 0x8131
+DBCSMinLeadByte = 0x81
+DBCSMinTrailByte = 0x31
+
+MB_ERR_INVALID_CHARS = 0x00000008
+WC_ERR_INVALID_CHARS = 0x00000080
+WC_NO_BEST_FIT_CHARS = 0x00000400
+MultiByteToWideChar = ctypes.windll.kernel32.MultiByteToWideChar
+WideCharToMultiByte = ctypes.windll.kernel32.WideCharToMultiByte
+
+class PlatformDecoder:
+	def __init__(self, codePage, flags=MB_ERR_INVALID_CHARS, errors='strict'):
+		self.codePage = codePage
+		self.flags = flags
+		self.errors = errors
+
+	def __call__(self, source):
+		srcLen = len(source)
+		size = srcLen
+		result = (ctypes.c_wchar*size)()
+		length = MultiByteToWideChar(self.codePage, self.flags, ctypes.c_char_p(source), srcLen, result, size)
+		if length != 0:
+			value = result.value[:length]
+			value += '\0'*(length - len(value))
+			return (value, srcLen)
+		if result.value and self.errors == 'ignore':
+			return (result.value, 0)
+
+		code = ctypes.GetLastError()
+		msg = ctypes.FormatError(code).strip()
+		raise UnicodeDecodeError(f'{self.codePage}', source, 0, srcLen, f'{code}: {msg}')
+
+class PlatformEncoder:
+	def __init__(self, codePage, flags=WC_NO_BEST_FIT_CHARS, errors='strict'):
+		if flags and codePage in (65001, 54936): # UTF-8, GB18030
+			flags = WC_ERR_INVALID_CHARS
+		self.codePage = codePage
+		self.flags = flags
+		self.errors = errors
+
+	def __call__(self, source):
+		srcLen = len(source)
+		size = srcLen*4
+		result = (ctypes.c_char*size)()
+		null = ctypes.c_void_p(None)
+		length = WideCharToMultiByte(self.codePage, self.flags, ctypes.c_wchar_p(source), srcLen, result, size, null, null)
+		if length != 0:
+			value = result.value[:length]
+			value += b'\0'*(length - len(value))
+			return (value, srcLen)
+		if result.value and self.errors == 'ignore':
+			return (result.value, 0)
+
+		code = ctypes.GetLastError()
+		msg = ctypes.FormatError(code).strip()
+		raise UnicodeEncodeError(f'{self.codePage}', source, 0, srcLen, f'{code}: {msg}')
 
 def isSurrogate(ch):
-	return 0xD800 <= ch <= 0xDBFF
+	return 0xD800 <= ch <= 0xDFFF
 
 def getCharacterName(ch):
 	try:
@@ -32,7 +90,7 @@ def readUnicodePropertyFile(path, propertyIndex=1, firstLast=None, withMissing=F
 	missingList = {}
 	prevLine = []
 	with open(path, encoding='utf-8') as fd:
-		for line in fd.readlines():
+		for line in fd:
 			line = line.strip()
 			missing = False
 			if not line:

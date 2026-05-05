@@ -291,20 +291,6 @@ void RESearch::ChSetWithCase(unsigned char c, bool caseSensitive) noexcept {
 
 namespace {
 
-constexpr unsigned char escapeValue(unsigned char ch) noexcept {
-	switch (ch) {
-	case 'a':	return '\a';
-	case 'b':	return '\b';
-	case 'f':	return '\f';
-	case 'n':	return '\n';
-	case 'r':	return '\r';
-	case 't':	return '\t';
-	case 'v':	return '\v';
-	case 'e':	return '\x1B';
-	default:	return 0;
-	}
-}
-
 constexpr int GetHexDigit(unsigned char ch) noexcept {
 	unsigned int diff = ch - '0';
 	if (diff < 10) {
@@ -348,18 +334,83 @@ int RESearch::GetBackslashExpression(const char *pattern, int &incr) noexcept {
 		return result;
 	}
 
-	switch (bsc) {
-	case 'a':
-	case 'b':
-	case 'n':
-	case 'f':
-	case 'r':
-	case 't':
-	case 'v':
-	case 'e':
-		result = escapeValue(bsc);
-		break;
-	case 'x': {
+	enum {
+		xHH = 1,
+		digit = 2,
+		nonDigit = 3,
+		space = 4,
+		nonSpace = 5,
+		word = 6,
+		nonWord = 7,
+		charsetMask = 7,
+	};
+	#define charset(c)	static_cast<char>(0x80 + (c))
+	static constexpr char backslashTable['x' - 'D' + 1] = {
+		charset(nonDigit),	// D
+		0,		// E
+		0,		// F
+		0,		// G
+		0,		// H
+		0,		// I
+		0,		// J
+		0,		// K
+		0,		// L
+		0,		// M
+		0,		// N
+		0,		// O
+		0,		// P
+		0,		// Q
+		0,		// R
+		charset(nonSpace),	// S
+		0,		// T
+		0,		// U
+		0,		// V
+		charset(nonWord),	// W
+		0,		// X
+		0,		// Y
+		0,		// Z
+		0,		// [
+		'\\',	// '\'
+		0,		// ]
+		0,		// ^
+		0,		// _
+		0,		// `
+		'\a',	// a
+		'\b',	// b
+		0,		// c
+		charset(digit),	// d
+		'\x1B',	// e
+		'\f',	// f
+		0,		// g
+		0,		// h
+		0,		// i
+		0,		// j
+		0,		// k
+		0,		// l
+		0,		// m
+		'\n',	// n
+		0,		// o
+		0,		// p
+		0,		// q
+		'\r',	// r
+		charset(space),	// s
+		'\t',	// t
+		0,		// u
+		'\v',	// v
+		charset(word),	// w
+		charset(xHH),	// x
+	};
+	#undef charset
+
+	const unsigned index = bsc - 'D';
+	const unsigned char escape = (index < sizeof(backslashTable)) ? backslashTable[index] : '\0';
+	if (static_cast<signed char>(escape) > 0) {
+		result = escape;
+		return result;
+	}
+
+	switch (escape & charsetMask) {
+	case xHH: { // 'x'
 		const unsigned char hd1 = pattern[1];
 		const unsigned char hd2 = pattern[2];
 		const int hexValue = GetHexValue(hd1, hd2);
@@ -371,19 +422,19 @@ int RESearch::GetBackslashExpression(const char *pattern, int &incr) noexcept {
 		}
 	}
 	break;
-	case 'd':
+	case digit: // 'd'
 		for (int c = '0'; c <= '9'; c++) {
 			ChSet(static_cast<unsigned char>(c));
 		}
 		break;
-	case 'D':
+	case nonDigit: // 'D'
 		for (int c = 0; c < MAXCHR; c++) {
 			if (c < '0' || c > '9') {
 				ChSet(static_cast<unsigned char>(c));
 			}
 		}
 		break;
-	case 's':
+	case space: // 's'
 		ChSet(' ');
 		ChSet('\t');
 		ChSet('\n');
@@ -391,21 +442,21 @@ int RESearch::GetBackslashExpression(const char *pattern, int &incr) noexcept {
 		ChSet('\f');
 		ChSet('\v');
 		break;
-	case 'S':
+	case nonSpace: // 'S'
 		for (int c = 0; c < MAXCHR; c++) {
 			if (c != ' ' && !(c >= 0x09 && c <= 0x0D)) {
 				ChSet(static_cast<unsigned char>(c));
 			}
 		}
 		break;
-	case 'w':
+	case word: // 'w'
 		for (int c = 0; c < MAXCHR; c++) {
 			if (iswordc(static_cast<unsigned char>(c))) {
 				ChSet(static_cast<unsigned char>(c));
 			}
 		}
 		break;
-	case 'W':
+	case nonWord: // 'W'
 		for (int c = 0; c < MAXCHR; c++) {
 			if (!iswordc(static_cast<unsigned char>(c))) {
 				ChSet(static_cast<unsigned char>(c));
@@ -414,6 +465,7 @@ int RESearch::GetBackslashExpression(const char *pattern, int &incr) noexcept {
 		break;
 	default:
 		result = bsc;
+		break;
 	}
 	return result;
 }

@@ -1,4 +1,5 @@
 import unicodedata
+import string
 
 from FileGenerator import Regenerate
 import MultiStageTable
@@ -127,6 +128,7 @@ def GenerateUnicodeControlCharacters():
 		"\u2068", # U+2068	FSI		First strong isolate
 		"\u2069", # U+2069	PDI		Pop directional isolate
 		"\u061C", # U+061C	ALM		Arabic letter mark
+		"\u00AD", # U+00AD	SHY		Soft hyphen
 	]
 
 	print('UnicodeControlCharacters:')
@@ -170,10 +172,9 @@ def GenerateJsonCharClass():
 				charClass = JsonChar_BraceOpen
 			elif ch in '}]':
 				charClass = JsonChar_BraceClose
-			else:
-				if ch in '+-':
-					# SignedInteger in ExponentPart
-					mask = JsonMask_Number
+			elif ch in '+-':
+				# SignedInteger in ExponentPart
+				mask = JsonMask_Number
 		elif ch == '\"':
 			state = SCE_JSON_STRING_DQ
 		elif ch == '\'':
@@ -204,7 +205,37 @@ def GenerateJsonCharClass():
 	lines = MultiStageTable.dumpArray(table, 16)
 	Regenerate("../lexers/LexJSON.cxx", "//", lines)
 
+def GenerateUrlCharClass():
+	UrlCharMask_Invalid	= 1
+	UrlCharMask_Identifier = 2
+	UrlCharMask_Punctuation = 4
+	UrlCharMask_SchemeName = 8
+	UrlCharMask_DomainName = 16
+
+	table = [0]*256
+	letters = string.ascii_letters + string.digits
+	punctuation = string.punctuation
+	invalid = ('"', '<', '>', '\\', '^', '`', '{', '|', '}', chr(127))
+	for i in range(128):
+		ch = chr(i)
+		mask = 0
+		if i <= 32 or ch in invalid: # IsInvalidUrlChar()
+			mask |= UrlCharMask_Invalid
+		if ch in letters or ch == '_': # IsIdentifierChar()
+			mask |= UrlCharMask_Identifier
+		if ch in punctuation: # IsPunctuation()
+			mask |= UrlCharMask_Punctuation
+		if ch in letters or ch in '+-.': # IsSchemeNameChar()
+			mask |= UrlCharMask_SchemeName
+		if ch in letters or ch in '_-': # IsDomainNameChar()
+			mask |= UrlCharMask_DomainName
+		table[i] = mask
+
+	lines = MultiStageTable.dumpArray(table, 16)
+	Regenerate("../src/ScintillaBase.cxx", "//kUrlCharClass", lines)
+
 if __name__ == '__main__':
 	#GenerateUTF8Table()
 	GenerateUnicodeControlCharacters()
 	GenerateJsonCharClass()
+	GenerateUrlCharClass()

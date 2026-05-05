@@ -10,18 +10,21 @@
 #define NP2_memchr			__builtin_char_memchr
 #endif
 
+// https://en.cppreference.com/w/cpp/language/attributes/assume
 #if defined(__clang__)
 #define NP2_assume(expr)	__builtin_assume(expr)
 #elif defined(_MSC_VER)
 #define NP2_assume(expr)	__assume(expr)
 #elif defined(__GNUC__)
-#define NP2_assume(expr)	do {				\
-	if (!(expr)) {								\
-		__builtin_unreachable();				\
-	}											\
-	} while (0)
+#define NP2_assume(expr)	__attribute__((assume(expr)))
 #else
-#define NP2_assume(expr)
+#define NP2_assume(expr)	[[assume(expr)]]
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define NP2_noinline __attribute__((noinline))
+#else
+#define NP2_noinline __declspec(noinline)
 #endif
 
 template <typename T, typename V>

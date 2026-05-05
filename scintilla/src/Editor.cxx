@@ -148,6 +148,7 @@ Editor::Editor() {
 	ticksToDwell = TimeForever;
 	dwelling = false;
 	dropWentOutside = false;
+	dragDropEnabled = true;
 	inDragDrop = DragDrop::none;
 	ptMouseLast.x = 0;
 	ptMouseLast.y = 0;
@@ -242,7 +243,7 @@ void Editor::InvalidateStyleData() noexcept {
 	view.posCache.Clear();
 }
 
-void Editor::InvalidateStyleRedraw() {
+void Editor::InvalidateStyleRedraw() noexcept {
 	NeedWrapping();
 	InvalidateStyleData();
 	Redraw();
@@ -1652,7 +1653,7 @@ bool Editor::WrapLines(WrapScope ws) {
 		const Sci::Line lineDocTop = pcs->DocFromDisplay(topLine);
 		LineDocSub lineScrollTo;
 		if (scrollToAfterWrap) {
-			lineScrollTo = scrollToAfterWrap.value();
+			lineScrollTo = *scrollToAfterWrap;
 		} else {
 			const Sci::Line subLineTop = topLine - pcs->DisplayFromDoc(lineDocTop);
 			lineScrollTo = { lineDocTop, subLineTop };
@@ -1951,7 +1952,7 @@ void Editor::SetVerticalScrollPos() {
 }
 
 // Empty method is overridden on GTK to show / hide scrollbars
-void Editor::ReconfigureScrollBars() noexcept {}
+void Editor::ReconfigureScrollBars() const noexcept {}
 
 void Editor::SetScrollBars() {
 	RefreshStyleData();
@@ -2363,7 +2364,7 @@ void Editor::PasteRectangular(SelectionPosition pos, const char *ptr, Sci::Posit
 	SetEmptySelection(pos);
 }
 
-bool Editor::CanPaste() noexcept {
+bool Editor::CanPaste() const noexcept {
 	return !pdoc->IsReadOnly() && !SelectionContainsProtected();
 }
 
@@ -2528,7 +2529,10 @@ void Editor::DelCharBack(bool allowLineStartDeletion) {
 	ShowCaretAtCurrentPosition();
 }
 
-void Editor::NotifyFocus(bool focus) {
+// Windows/macOS does not have a primary selection
+void Editor::ClaimSelection() const noexcept {}
+
+void Editor::NotifyFocus(bool focus) const noexcept {
 	NotificationData scn = {};
 	scn.nmhdr.code = focus ? Notification::FocusIn : Notification::FocusOut;
 	NotifyParent(scn);
@@ -4169,46 +4173,49 @@ int Editor::KeyDownWithModifiers(Keys key, KeyMod modifiers, bool *consumed) {
 
 void Editor::Indent(bool forwards, bool lineIndent) {
 	const UndoGroup ug(pdoc);
+	// Avoid problems with recalculating rectangular range multiple times by temporarily
+	// treating rectangular selection as multiple stream selection.
+	const Selection::SelTypes selType = sel.selType;
+	if (sel.IsRectangular()) {
+		sel.selType = Selection::SelTypes::stream;
+	}
 	for (size_t r = 0; r < sel.Count(); r++) {
 		const Sci::Line lineOfAnchor =
 			pdoc->SciLineFromPosition(sel.Range(r).anchor.Position());
 		Sci::Position caretPosition = sel.Range(r).caret.Position();
 		const Sci::Line lineCurrentPos = pdoc->SciLineFromPosition(caretPosition);
 		if (lineOfAnchor == lineCurrentPos && !lineIndent) {
+			const int indentationStep = pdoc->IndentSize();
 			if (forwards) {
 				pdoc->DeleteChars(sel.Range(r).Start().Position(), sel.Range(r).Length());
 				caretPosition = sel.Range(r).caret.Position();
-				if (pdoc->tabIndents && pdoc->GetColumn(caretPosition) <= pdoc->GetColumn(pdoc->GetLineIndentPosition(lineCurrentPos))) {
-					const int indentation = pdoc->GetLineIndentation(lineCurrentPos);
-					const int indentationStep = pdoc->IndentSize();
+				const int indentation = pdoc->GetLineIndentation(lineCurrentPos);
+				const Sci::Position column = pdoc->GetColumn(caretPosition);
+				if (column <= indentation && pdoc->tabIndents) {
+					// Inside initial whitespace
 					const Sci::Position posSelect = pdoc->SetLineIndentation(
-						lineCurrentPos, indentation + indentationStep - indentation % indentationStep);
+						lineCurrentPos, indentation + indentationStep - (indentation % indentationStep));
 					sel.Range(r) = SelectionRange(posSelect);
 				} else {
 					if (pdoc->useTabs) {
-						const Sci::Position lengthInserted = pdoc->InsertString(caretPosition, "\t", 1);
+						const Sci::Position lengthInserted = pdoc->InsertString(caretPosition, "\t");
 						sel.Range(r) = SelectionRange(caretPosition + lengthInserted);
 					} else {
-						int numSpaces = (pdoc->tabInChars) -
-							static_cast<int>((pdoc->GetColumn(caretPosition) % (pdoc->tabInChars)));
-						if (numSpaces < 1)
-							numSpaces = pdoc->tabInChars;
+						const Sci::Position numSpaces = pdoc->tabInChars - (column % pdoc->tabInChars);
 						const std::string spaceText(numSpaces, ' ');
 						const Sci::Position lengthInserted = pdoc->InsertString(caretPosition, spaceText);
 						sel.Range(r) = SelectionRange(caretPosition + lengthInserted);
 					}
 				}
 			} else {
+				const int indentation = pdoc->GetLineIndentation(lineCurrentPos);
 				const Sci::Position column = pdoc->GetColumn(caretPosition);
-				const int indentation = pdoc->tabIndents ? pdoc->GetLineIndentation(lineCurrentPos) : -1;
-				if (column <= indentation) {
-					const int indentationStep = pdoc->IndentSize();
+				if (column <= indentation && pdoc->tabIndents) {
 					const Sci::Position posSelect = pdoc->SetLineIndentation(lineCurrentPos, indentation - indentationStep);
 					sel.Range(r) = SelectionRange(posSelect);
 				} else {
-					Sci::Position newColumn = ((column - 1) / pdoc->tabInChars) *
-						pdoc->tabInChars;
-					newColumn = std::max<Sci::Position>(newColumn, 0);
+					const Sci::Position newColumn = std::max<Sci::Position>(0,
+						((column - 1) / pdoc->tabInChars) * pdoc->tabInChars);
 					Sci::Position newPos = caretPosition;
 					while (pdoc->GetColumn(newPos) > newColumn)
 						newPos--;
@@ -4243,10 +4250,12 @@ void Editor::Indent(bool forwards, bool lineIndent) {
 			}
 		}
 	}
+	sel.selType = selType;	// Restore rectangular mode
+	ThinRectangularRange();
 	ContainerNeedsUpdate(Update::Selection);
 }
 
-std::unique_ptr<CaseFolder> Editor::CaseFolderForEncoding() {
+std::unique_ptr<CaseFolder> Editor::CaseFolderForEncoding() const {
 	// Simple default that only maps ASCII upper case to lower case.
 	return std::make_unique<CaseFolderTable>();
 }
@@ -4378,23 +4387,6 @@ Sci::Position Editor::SearchText(
 	}
 
 	return pos;
-}
-
-std::string Editor::CaseMapString(const std::string &s, CaseMapping caseMapping) const {
-	std::string ret(s);
-	for (char &ch : ret) {
-		switch (caseMapping) {
-		case CaseMapping::upper:
-			ch = MakeUpperCase(ch);
-			break;
-		case CaseMapping::lower:
-			ch = MakeLowerCase(ch);
-			break;
-		default:	// no action
-			break;
-		}
-	}
-	return ret;
 }
 
 /**
@@ -4542,7 +4534,7 @@ void Editor::DisplayCursor(Window::Cursor c) noexcept {
 		wMain.SetCursor(static_cast<Window::Cursor>(cursorMode));
 }
 
-bool Editor::DragThreshold(Point ptStart, Point ptNow) noexcept {
+bool Editor::DragThreshold(Point ptStart, Point ptNow) const noexcept {
 	const Point ptDiff = ptStart - ptNow;
 	const XYPOSITION distanceSquared = ptDiff.x * ptDiff.x + ptDiff.y * ptDiff.y;
 	return distanceSquared > 16.0f;
@@ -4938,7 +4930,7 @@ void Editor::ButtonDownWithModifiers(Point pt, unsigned int curTime, KeyMod modi
 						// Switch to just the click position
 						SetSelection(newPos, newPos);
 					}
-					if (!sel.Range(selectionPart).Empty()) {
+					if (dragDropEnabled && !sel.Range(selectionPart).Empty()) {
 						inDragDrop = DragDrop::initial;
 					}
 				}
@@ -5056,7 +5048,7 @@ void Editor::ButtonMoveWithModifiers(Point pt, unsigned int, KeyMod modifiers) {
 		AllowVirtualSpace(virtualSpaceOptions, sel.IsRectangular()));
 	movePos = MovePositionOutsideChar(movePos, sel.MainCaret() - movePos.Position());
 
-	if (inDragDrop == DragDrop::initial) {
+	if (dragDropEnabled && inDragDrop == DragDrop::initial) {
 		if (DragThreshold(ptMouseLast, pt)) {
 			ChangeMouseCapture(false);
 			SetDragPosition(movePos);
@@ -5154,7 +5146,7 @@ void Editor::ButtonMoveWithModifiers(Point pt, unsigned int, KeyMod modifiers) {
 			}
 		}
 		// Display regular (drag) cursor over selection
-		if (PointInSelection(pt) && !SelectionEmpty()) {
+		if (dragDropEnabled && PointInSelection(pt) && !SelectionEmpty()) {
 			DisplayCursor(Window::Cursor::arrow);
 			SetHoverIndicatorPosition(Sci::invalidPosition);
 		} else {
@@ -5891,7 +5883,7 @@ Sci::Position Editor::GetTag(char *tagValue, int tagNumber) {
 	const char *text = nullptr;
 	Sci::Position length = 0;
 	if ((tagNumber >= 1) && (tagNumber <= 9)) {
-		char name[3];
+		char name[4];
 		name[0] = '\\';
 		name[1] = static_cast<char>(tagNumber + '0');
 		name[2] = '\0';
@@ -6093,15 +6085,27 @@ void Editor::StyleSetMessage(Message iMessage, uptr_t wParam, sptr_t lParam) {
 		const char *utf8 = ConstCharPtrFromSPtr(lParam);
 		const size_t len = strlen(utf8);
 		memcpy(vs.styles[wParam].invisibleRepresentation, utf8, len + 1);
-		vs.styles[wParam].invisibleRepresentationLength = static_cast<uint8_t>(len);
+		vs.styles[wParam].invisibleRepresentationLength = len;
 		break;
 	}
 	case Message::StyleSetHotSpot:
 		vs.styles[wParam].hotspot = lParam != 0;
+		if (wParam == static_cast<uptr_t>(StylesCommon::Link)) {
+			const bool enabled = pdoc->EnableUrlHighlight();
+			constexpr int index = static_cast<int>(IndicatorNumbers::Link);
+			const IndicatorStyle style = enabled ? IndicatorStyle::TextFore : IndicatorStyle::Plain;
+			const ColourRGBA fore = vs.styles[wParam].fore;
+			Indicator &indicator = vs.indicators[index];
+			indicator.sacNormal.style = style;
+			indicator.sacNormal.fore = fore;
+			indicator.sacHover.style = style;
+			indicator.sacHover.fore = fore;
+			indicator.hoverUnderline = enabled;
+		}
 		break;
-	case Message::StyleSetCheckMonospaced:
-		vs.styles[wParam].checkMonospaced = lParam != 0;
-		break;
+	// case Message::StyleSetCheckMonospaced:
+	// 	vs.styles[wParam].checkMonospaced = lParam != 0;
+	// 	break;
 	default:
 		break;
 	}
@@ -6147,8 +6151,8 @@ sptr_t Editor::StyleGetMessage(Message iMessage, uptr_t wParam, sptr_t lParam) {
 		return StringResult(lParam, vs.styles[wParam].invisibleRepresentation);
 	case Message::StyleGetHotSpot:
 		return vs.styles[wParam].hotspot ? 1 : 0;
-	case Message::StyleGetCheckMonospaced:
-		return vs.styles[wParam].checkMonospaced ? 1 : 0;
+	// case Message::StyleGetCheckMonospaced:
+	// 	return vs.styles[wParam].checkMonospaced ? 1 : 0;
 	default:
 		break;
 	}
@@ -6179,11 +6183,11 @@ void Editor::SetSelectionNMessage(Message iMessage, uptr_t wParam, sptr_t lParam
 		break;
 
 	case Message::SetSelectionNStart:
-		sel.Range(wParam).anchor.SetPosition(lParam);
+		sel.Range(wParam).StartSet(SelectionPosition(lParam));
 		break;
 
 	case Message::SetSelectionNEnd:
-		sel.Range(wParam).caret.SetPosition(lParam);
+		sel.Range(wParam).EndSet(SelectionPosition(lParam));
 		break;
 
 	default:
@@ -6970,7 +6974,7 @@ sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 		return static_cast<sptr_t>(vs.tabDrawMode);
 
 	case Message::SetTabDrawMode:
-		vs.tabDrawMode = static_cast<TabDrawMode>(wParam);
+		SetAppearance(vs.tabDrawMode, static_cast<TabDrawMode>(wParam));
 		Redraw();
 		break;
 
@@ -7065,6 +7069,13 @@ sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 
 	case Message::GetBufferedDraw:
 		return view.bufferedDraw;
+
+	case Message::GetDragDropEnabled:
+		return dragDropEnabled;
+
+	case Message::SetDragDropEnabled:
+		dragDropEnabled = wParam != 0;
+		break;
 
 	case Message::GetPhasesDraw:
 		return static_cast<sptr_t>(view.phasesDraw);
@@ -7380,6 +7391,7 @@ sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 				InvalidateStyleRedraw();
 				SetRepresentations();
 				NotifyCodePageChanged(oldCodePage);
+				// CaseFolderForEncoding(); // test case fold table creation
 			}
 		}
 		break;
@@ -7649,7 +7661,7 @@ sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 	case Message::StyleSetVisible:
 	case Message::StyleSetChangeable:
 	case Message::StyleSetHotSpot:
-	case Message::StyleSetCheckMonospaced:
+	// case Message::StyleSetCheckMonospaced:
 	case Message::StyleSetInvisibleRepresentation:
 		StyleSetMessage(iMessage, wParam, lParam);
 		break;
@@ -7671,7 +7683,7 @@ sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 	case Message::StyleGetVisible:
 	case Message::StyleGetChangeable:
 	case Message::StyleGetHotSpot:
-	case Message::StyleGetCheckMonospaced:
+	// case Message::StyleGetCheckMonospaced:
 	case Message::StyleGetInvisibleRepresentation:
 		return StyleGetMessage(iMessage, wParam, lParam);
 
@@ -8193,6 +8205,10 @@ sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 	case Message::PageDownRectExtend:
 	case Message::SelectionDuplicate:
 		return KeyCommand(iMessage);
+
+	case Message::CustomCaseMapping:
+		ChangeCaseOfSelection(static_cast<CaseMapping>(wParam));
+		break;
 
 	case Message::BraceHighlight:
 		SetBraceHighlight(PositionFromUPtr(wParam), lParam, StyleBraceLight);
@@ -8962,7 +8978,7 @@ sptr_t Editor::WndProc(Message iMessage, uptr_t wParam, sptr_t lParam) {
 		return DefWndProc(iMessage, wParam, lParam);
 	}
 
-	// If there was a change that needs its selection saved and it wasn't explicity saved
+	// If there was a change that needs its selection saved and it wasn't explicitly saved
 	// then do that here.
 	RememberCurrentSelectionForRedoOntoStack();
 

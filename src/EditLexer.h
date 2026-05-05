@@ -140,7 +140,10 @@ using LPCEDITLEXER = const EDITLEXER *;
 #define NP2LEX_SCALA		63014	// SCLEX_SCALA		Scala Script
 #define NP2LEX_GO			63015	// SCLEX_GO			Go Source
 #define NP2LEX_GRADLE		63016	// SCLEX_GROOVY		Gradle Build Script
-
+#define NP2LEX_TYPST		63017	// SCLEX_TYPST		Typst File
+#define NP2LEX_ERLANG		63018	// SCLEX_ERLANG		Erlang Source
+#define NP2LEX_ELIXIR		63019	// SCLEX_ERLANG		Elixir Source
+#define NP2LEX_POWERBUILDER	63020	// SCLEX_POWERBUILDER	PowerBuilder Source
 #define NP2LEX_VISUALBASIC	63021	// SCLEX_VISUALBASIC	Visual Basic
 #define NP2LEX_FSHARP		63022	// SCLEX_FSHARP		F# Source
 #define NP2LEX_ASM			63023	// SCLEX_ASM		Assembler Source

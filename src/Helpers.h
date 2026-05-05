@@ -58,6 +58,17 @@ constexpr bool StrNotEmpty(LPCWSTR s) noexcept {
 	return s != nullptr && *s != L'\0';
 }
 
+template <typename T, size_t N>
+requires(N*sizeof(T) >= sizeof(int))
+inline void SetStrEmpty(T (&s)[N]) noexcept {
+	memset(s, 0, sizeof(int));
+}
+
+template <typename T>
+constexpr bool FlagSet(T value, T test) noexcept {
+	return (static_cast<int>(value) & static_cast<int>(test)) != 0;
+}
+
 // see scintilla/lexlib/CharacterSet.h
 #define UnsafeLower(ch)		((ch) | 0x20)
 #define UnsafeUpper(ch)		((ch) & ~0x20)
@@ -157,10 +168,74 @@ inline bool StrCaseEqual(LPCWSTR s1, LPCWSTR s2) noexcept {
 	return _wcsicmp(s1, s2) == 0;
 }
 
+#if defined(__clang__) || defined(__GNUC__) || !defined(_MSC_BUILD)
 template <typename T, size_t N>
 inline void StrCpyEx(T *s, const T (&t)[N]) noexcept {
-	memcpy(s, t, N*sizeof(T));
+	__builtin_memcpy(s, t, N*sizeof(T));
 }
+
+#else
+template <size_t N>
+inline void StrCpyEx(char *s, const char (&t)[N]) noexcept {
+	switch (N) {
+	case 1:
+		s[0] = t[0];
+		break;
+	case 2:
+		*((uint16_t *)s) = *((const uint16_t *)t);
+		break;
+	case 3:
+		*((uint16_t *)s) = *((const uint16_t *)t);
+		s[2] = t[2];
+		break;
+	case 4:
+		*((uint32_t *)s) = *((const uint32_t *)t);
+		break;
+	case 5:
+		*((uint32_t *)s) = *((const uint32_t *)t);
+		s[4] = t[4];
+		break;
+	case 6:
+		*((uint32_t *)s) = *((const uint32_t *)t);
+		*((uint16_t *)(s + 4)) = *((const uint16_t *)(t + 4));
+		break;
+	case 7:
+		*((uint32_t *)s) = *((const uint32_t *)t);
+		*((uint16_t *)(s + 4)) = *((const uint16_t *)(t + 4));
+		s[6] = t[6];
+		break;
+	case 8:
+		*((uint32_t *)s) = *((const uint32_t *)t);
+		*((uint32_t *)(s + 4)) = *((const uint32_t *)(t + 4));
+		break;
+	default:
+		memcpy(s, t, N*sizeof(char));
+		break;
+	}
+}
+
+template <size_t N>
+inline void StrCpyEx(wchar_t *s, const wchar_t (&t)[N]) noexcept {
+	switch (N) {
+	case 1:
+		s[0] = t[0];
+		break;
+	case 2:
+		*((uint32_t *)s) = *((const uint32_t *)t);
+		break;
+	case 3:
+		*((uint32_t *)s) = *((const uint32_t *)t);
+		s[2] = t[2];
+		break;
+	case 4:
+		*((uint64_t *)s) = *((const uint64_t *)t);
+		break;
+	default:
+		memcpy(s, t, N*sizeof(wchar_t));
+		break;
+	}
+}
+#endif
 
 template <typename T, size_t N>
 constexpr bool StrEqualEx(const T *s, const T (&t)[N]) noexcept {
@@ -212,8 +287,8 @@ inline bool HexStrToInt(LPCWSTR str, int *value) noexcept {
 	return str != end;
 }
 
-int ParseCommaList(LPCWSTR str, int result[], int count) noexcept;
-int ParseCommaList64(LPCWSTR str, int64_t result[], int count) noexcept;
+UINT ParseCommaList(LPCWSTR str, int result[], UINT count) noexcept;
+UINT ParseCommaList64(LPCWSTR str, int64_t result[], UINT count) noexcept;
 LPCSTR GetCurrentLogTime() noexcept;
 
 struct StopWatch {
@@ -265,6 +340,7 @@ extern DWORD kSystemLibraryLoadFlags;
 #define kSystemLibraryLoadFlags		LOAD_LIBRARY_SEARCH_SYSTEM32
 #endif
 extern WCHAR szIniFile[MAX_PATH];
+extern WCHAR szExeRealPath[MAX_PATH];
 
 // Operating System Version
 // https://docs.microsoft.com/en-us/windows/win32/sysinfo/operating-system-version
@@ -542,7 +618,7 @@ LSTATUS Registry_DeleteTree(HKEY hKey, LPCWSTR lpSubKey) noexcept;
 #endif
 
 inline bool KeyboardIsKeyDown(int key) noexcept {
-	return (GetKeyState(key) & 0x8000) != 0;
+	return ::GetKeyState(key) & 0x8000;
 }
 
 #define WaitableTimer_IdleTaskTimeSlot		100
@@ -581,7 +657,6 @@ bool IsElevated() noexcept;
 
 #define SetExplorerTheme(hwnd)		SetWindowTheme((hwnd), L"Explorer", nullptr)
 
-bool FindUserResourcePath(LPCWSTR path, LPWSTR outPath) noexcept;
 HBITMAP LoadBitmapFile(LPCWSTR path) noexcept;
 HBITMAP ResizeImageForDPI(HBITMAP hbmp, UINT dpi) noexcept;
 inline HBITMAP ResizeImageForCurrentDPI(HBITMAP hbmp) noexcept {
@@ -611,30 +686,55 @@ void SnapToDefaultButton(HWND hwndBox) noexcept;
 void GetDlgPos(HWND hDlg, LPINT xDlg, LPINT yDlg) noexcept;
 void SetDlgPos(HWND hDlg, int xDlg, int yDlg) noexcept;
 
-#define ResizeDlgDirection_Both		0
-#define ResizeDlgDirection_OnlyX	1
-#define ResizeDlgDirection_OnlyY	2
-void ResizeDlg_InitEx(HWND hwnd, int cxFrame, int cyFrame, int nIdGrip, int iDirection) noexcept;
-inline void ResizeDlg_Init(HWND hwnd, int cxFrame, int cyFrame, int nIdGrip) noexcept {
-	ResizeDlg_InitEx(hwnd, cxFrame, cyFrame, nIdGrip, ResizeDlgDirection_Both);
-}
-inline void ResizeDlg_InitX(HWND hwnd, int cxFrame, int nIdGrip) noexcept {
-	ResizeDlg_InitEx(hwnd, cxFrame, 0, nIdGrip, ResizeDlgDirection_OnlyX);
-}
-inline void ResizeDlg_InitY(HWND hwnd, int cyFrame, int nIdGrip) noexcept {
-	ResizeDlg_InitEx(hwnd, 0, cyFrame, nIdGrip, ResizeDlgDirection_OnlyY);
-}
-void ResizeDlg_Destroy(HWND hwnd, int *cxFrame, int *cyFrame) noexcept;
-void ResizeDlg_Size(HWND hwnd, LPARAM lParam, int *cx, int *cy) noexcept;
-void ResizeDlg_GetMinMaxInfo(HWND hwnd, LPARAM lParam) noexcept;
+// bit [16, 19]
+#define RESIZE_MOVE_NONE	0
+#define RESIZE_MOVE_X		1
+#define RESIZE_MOVE_Y		(1 << 1)
+#define RESIZE_MOVE_Y1		(2 << 1)
+#define RESIZE_MOVE_XY		(RESIZE_MOVE_X | RESIZE_MOVE_Y)
+#define RESIZE_MOVE_MASK	7
+// bit [20, 23]
+#define RESIZE_SIZE_NONE	0
+#define RESIZE_SIZE_X		1
+#define RESIZE_SIZE_Y		(1 << 1)
+#define RESIZE_SIZE_Y1		(2 << 1)
+#define RESIZE_SIZE_Y2		(3 << 1)
+#define RESIZE_SIZE_XY		(RESIZE_SIZE_X | RESIZE_SIZE_Y)
+#define RESIZE_SIZE_XY1		(RESIZE_SIZE_X | RESIZE_SIZE_Y1)
+#define RESIZE_SIZE_XY2		(RESIZE_SIZE_X | RESIZE_SIZE_Y2)
+#define RESIZE_SIZE_MASK	7
+// bit [24, ]
+#define RESIZE_INVALIDATE_RECT		(1 << 24)	// static label
+#define RESIZE_AUTOSIZE_USEHEADER	(1 << 25)	// ListView
 
-void ResizeDlg_InitY2Ex(HWND hwnd, int cxFrame, int cyFrame, int nIdGrip, int iDirection, int nCtlId1, int nCtlId2) noexcept;
-inline void ResizeDlg_InitY2(HWND hwnd, int cxFrame, int cyFrame, int nIdGrip, int nCtlId1, int nCtlId2) noexcept {
-	ResizeDlg_InitY2Ex(hwnd, cxFrame, cyFrame, nIdGrip, ResizeDlgDirection_Both, nCtlId1, nCtlId2);
+#define DeferCtlMoveX(id)	((id) | (RESIZE_MOVE_X << 16))
+#define DeferCtlMoveY(id)	((id) | (RESIZE_MOVE_Y << 16))
+#define DeferCtlMoveY1(id)	((id) | (RESIZE_MOVE_Y1 << 16))
+#define DeferCtlMove(id)	((id) | (RESIZE_MOVE_XY << 16))
+#define DeferCtlSizeX(id)	((id) | (RESIZE_SIZE_X << 20))
+#define DeferCtlSizeY(id)	((id) | (RESIZE_SIZE_Y << 20))
+#define DeferCtlSize(id)	((id) | (RESIZE_SIZE_XY << 20))
+#define DeferCtlSizeXY1(id)	((id) | (RESIZE_SIZE_XY1 << 20))
+#define DeferCtlEx(id, move, size)	((id) | ((move) << 16) | ((size) << 20))
+#define DeferCtlMoveYSizeX(id)	DeferCtlEx((id), RESIZE_MOVE_Y, RESIZE_SIZE_X)
+#define DeferCtlMoveY1SizeXY2(id)	DeferCtlEx((id), RESIZE_MOVE_Y1, RESIZE_SIZE_XY2)
+
+void ResizeDlg_InitEx(HWND hwnd, int *cxFrame, int *cyFrame, const DWORD *controlDefinition, DWORD controlCount) noexcept;
+inline void ResizeDlg_Init(HWND hwnd, int *cxFrame, int *cyFrame, const DWORD *controlDefinition, DWORD controlCount) noexcept {
+	ResizeDlg_InitEx(hwnd, cxFrame, cyFrame, controlDefinition, controlCount);
 }
-int ResizeDlg_CalcDeltaY2(HWND hwnd, int dy, int cy, int nCtlId1, int nCtlId2) noexcept;
+inline void ResizeDlg_InitX(HWND hwnd, int *cxFrame, const DWORD *controlDefinition, DWORD controlCount) noexcept {
+	ResizeDlg_InitEx(hwnd, cxFrame, nullptr, controlDefinition, controlCount);
+}
+inline void ResizeDlg_InitY(HWND hwnd, int *cyFrame, const DWORD *controlDefinition, DWORD controlCount) noexcept {
+	ResizeDlg_InitEx(hwnd, nullptr, cyFrame, controlDefinition, controlCount);
+}
+inline void ResizeDlg_InitY2(HWND hwnd, int *cxFrame, int *cyFrame, const DWORD *controlDefinition, DWORD controlCount, UINT percent) noexcept {
+	ResizeDlg_InitEx(hwnd, cxFrame, cyFrame, controlDefinition, controlCount | (percent << 16));
+}
 
 HDWP DeferCtlPos(HDWP hdwp, HWND hwndDlg, int nCtlId, int dx, int dy, UINT uFlags) noexcept;
+HDWP DeferCtlPosEx(HDWP hdwp, HWND hwndDlg, int nCtlId, int dx, int dy, int cx, int cy) noexcept;
 void ResizeDlgCtl(HWND hwndDlg, int nCtlId, int dx, int dy) noexcept;
 
 #define SendWMCommandEx(hwnd, id, extra)	SendMessage(hwnd, WM_COMMAND, MAKEWPARAM((id), (extra)), 0)
@@ -660,7 +760,6 @@ void DeleteBitmapButton(HWND hwnd, int nCtlId) noexcept;
 #define StatusSetSimple(hwnd, b)				SendMessage(hwnd, SB_SIMPLE, (b), 0)
 #define StatusSetText(hwnd, nPart, lpszText)	SendMessage(hwnd, SB_SETTEXT, (nPart), AsInteger<LPARAM>(lpszText))
 BOOL StatusSetTextID(HWND hwnd, UINT nPart, UINT uID) noexcept;
-int  StatusCalcPaneWidth(HWND hwnd, LPCWSTR lpsz) noexcept;
 
 /**
  * we only have 26 commands in toolbar
@@ -690,8 +789,8 @@ inline void SendWMCommandOrBeep(HWND hwnd, UINT id) noexcept {
 	}
 }
 
-HMODULE LoadLocalizedResourceDLL(LANGID lang, LPCWSTR dllName) noexcept;
-constexpr bool IsChineseTraditionalSubLang(LANGID subLang) noexcept {
+HMODULE LoadLocalizedResourceDLL(UINT lang, LPCWSTR dllName) noexcept;
+constexpr bool IsChineseTraditionalSubLang(UINT subLang) noexcept {
 	return subLang == SUBLANG_CHINESE_TRADITIONAL
 		|| subLang == SUBLANG_CHINESE_HONGKONG
 		|| subLang == SUBLANG_CHINESE_MACAU;
@@ -746,8 +845,8 @@ inline void GetProgramRealPath(LPWSTR tchModule, DWORD nSize) noexcept {
 
 // similar to std::filesystem::equivalent()
 bool PathEquivalent(LPCWSTR pszPath1, LPCWSTR pszPath2) noexcept;
-void PathRelativeToApp(LPCWSTR lpszSrc, LPWSTR lpszDest, DWORD dwAttrTo, bool bUnexpandEnv, bool bUnexpandMyDocs) noexcept;
-void PathAbsoluteFromApp(LPCWSTR lpszSrc, LPWSTR lpszDest, bool bExpandEnv) noexcept;
+void PathRelativeToApp(LPCWSTR lpszSrc, LPWSTR lpszDest, DWORD dwAttrTo, BOOL bUnexpandMyDocs) noexcept;
+void PathAbsoluteFromApp(LPCWSTR lpszSrc, LPWSTR lpszDest) noexcept;
 bool PathGetLnkPath(LPCWSTR pszLnkFile, LPWSTR pszResPath);
 bool PathCreateDeskLnk(LPCWSTR pszDocument);
 bool PathCreateFavLnk(LPCWSTR pszName, LPCWSTR pszTarget, LPCWSTR pszDir);
@@ -764,7 +863,10 @@ void PrepareFilterStr(LPWSTR lpFilter) noexcept;
 void	StrTab2Space(LPWSTR lpsz) noexcept;
 bool	PathFixBackslashes(LPWSTR lpsz) noexcept;
 
-void	ExpandEnvironmentStringsEx(LPWSTR lpSrc, DWORD dwSrc) noexcept;
+template <DWORD cchDest>
+[[nodiscard]] inline bool ExpandEnvironmentStringsEx(LPCWSTR lpszSrc, wchar_t (&lpszDest)[cchDest]) noexcept {
+	return ExpandEnvironmentStrings(lpszSrc, lpszDest, cchDest) - 1 < cchDest;
+}
 DWORD_PTR SHGetFileInfo2(LPCWSTR pszPath, DWORD dwFileAttributes, SHFILEINFO *psfi, UINT cbFileInfo, UINT uFlags) noexcept;
 
 // remove '&' from access key, i.e. SHStripMneumonic().
@@ -811,7 +913,8 @@ struct MRUList {
 	void Empty(bool save, bool destroy = false) noexcept;
 	void Load() noexcept;
 	void Save() const noexcept;
-	void MergeSave(bool keep) noexcept;
+	void Reload() noexcept;
+	void MergeSave(bool keep, bool destroy) noexcept;
 	void AddToCombobox(HWND hwnd) const noexcept;
 };
 
@@ -832,7 +935,6 @@ struct BitmapCache {
 };
 
 //==== Themed Dialogs =========================================================
-bool	GetThemedDialogFont(LPWSTR lpFaceName, WORD *wSize) noexcept;
 DLGTEMPLATE *LoadThemedDialogTemplate(LPCWSTR lpDialogTemplateID, HINSTANCE hInstance) noexcept;
 #define ThemedDialogBox(hInstance, lpTemplate, hWndParent, lpDialogFunc) \
 	ThemedDialogBoxParam(hInstance, lpTemplate, hWndParent, lpDialogFunc, 0)
@@ -844,6 +946,10 @@ UINT_PTR CALLBACK OpenSaveFileDlgHookProc(HWND hWnd, UINT uMsg, WPARAM wParam, L
 
 //==== UnSlash Functions ======================================================
 void TransformBackslashes(char *pszInput, BOOL bRegEx, UINT cpEdit) noexcept;
+// backslash escape for C0 control character => \xHH
+#define kMaxBackslashEscapeCount	4
+// backslash escape regex meta character
+#define kMaxRegexEscapeCount		2
 bool AddBackslashA(char *pszOut, const char *pszInput) noexcept;
 bool AddBackslashW(LPWSTR pszOut, LPCWSTR pszInput) noexcept;
 void EscapeRegex(LPSTR pszOut, LPCSTR pszIn) noexcept;

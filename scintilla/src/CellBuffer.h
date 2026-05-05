@@ -66,6 +66,17 @@ struct SplitView {
 	}
 };
 
+struct ChangedRange {
+	Sci::Position start = 0;
+	Sci::Position end = 0;
+	[[nodiscard]] bool Empty() const noexcept {
+		return end == 0;
+	}
+	Sci::Position Length() const noexcept {
+		return end - start;
+	}
+};
+
 /**
  * Holder for an expandable array of characters that supports undo and line markers.
  * Based on article "Data Structures in a Bit-Mapped Text Editor"
@@ -114,7 +125,7 @@ public:
 	void GetCharRange(char *buffer, Sci::Position position, Sci::Position lengthRetrieve) const noexcept;
 	char StyleAt(Sci::Position position) const noexcept;
 	void GetStyleRange(unsigned char *buffer, Sci::Position position, Sci::Position lengthRetrieve) const noexcept;
-	const char *BufferPointer();
+	const char *BufferPointer() noexcept;
 	const char *RangePointer(Sci::Position position, Sci::Position rangeLength) noexcept;
 	int CheckRange(const char *chars, const char *styles, Sci::Position position, Sci::Position rangeLength) const noexcept;
 	Sci::Position GapPosition() const noexcept;
@@ -150,8 +161,8 @@ public:
 
 	/// Setting styles for positions outside the range of the buffer is safe and has no effect.
 	/// @return true if the style of a character is changed.
-	bool SetStyleAt(Sci::Position position, char styleValue) noexcept;
-	bool SetStyleFor(Sci::Position position, Sci::Position lengthStyle, char styleValue) noexcept;
+	ChangedRange SetStyles(Sci::Position position, Sci::Position lengthStyle, const char *styles) noexcept;
+	ChangedRange SetStyleFor(Sci::Position position, Sci::Position lengthStyle, char styleValue) noexcept;
 
 	const char *DeleteChars(Sci::Position position, Sci::Position deleteLength, bool &startSequence);
 
