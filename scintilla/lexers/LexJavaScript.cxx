@@ -115,9 +115,9 @@ constexpr int GetStringQuote(int state) noexcept {
 }
 
 constexpr bool FollowExpression(int chPrevNonWhite, int stylePrevNonWhite) noexcept {
-	return chPrevNonWhite == ')' || chPrevNonWhite == ']'
+	return stylePrevNonWhite >= SCE_JS_IDENTIFIER
 		|| (stylePrevNonWhite >= SCE_JS_NUMBER && stylePrevNonWhite <= SCE_JS_OPERATOR_PF)
-		|| IsJsIdentifierChar(chPrevNonWhite);
+		|| chPrevNonWhite == ')' || chPrevNonWhite == ']';
 }
 
 constexpr bool IsRegexStart(int chPrevNonWhite, int stylePrevNonWhite) noexcept {
@@ -135,7 +135,7 @@ inline bool IsJsxTagStart(const StyleContext &sc, int chPrevNonWhite, int styleP
 void ColouriseJsDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int initStyle, LexerWordList keywordLists, Accessor &styler) {
 	int lineStateLineType = 0;
 	int lineContinuation = 0;
-	bool insideRegexRange = false; // inside regex character range []
+	bool insideRegexCharacterClass = false; // inside regex character class []
 
 	KeywordType kwType = KeywordType::None;
 	int chBeforeIdentifier = 0;
@@ -355,8 +355,8 @@ void ColouriseJsDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int initStyl
 			} else if (sc.ch == '\\') {
 				sc.Forward();
 			} else if (sc.ch == '[' || sc.ch == ']') {
-				insideRegexRange = sc.ch == '[';
-			} else if (sc.ch == '/' && !insideRegexRange) {
+				insideRegexCharacterClass = sc.ch == '[';
+			} else if (sc.ch == '/' && !insideRegexCharacterClass) {
 				sc.Forward();
 				// regex flags
 				while (IsLowerCase(sc.ch)) {
@@ -494,7 +494,7 @@ void ColouriseJsDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int initStyl
 					continue;
 				}
 				if (!IsEOLChar(sc.chNext) && IsRegexStart(chPrevNonWhite, stylePrevNonWhite)) {
-					insideRegexRange = false;
+					insideRegexCharacterClass = false;
 					sc.SetState(SCE_JS_REGEX);
 				} else {
 					sc.SetState(SCE_JS_OPERATOR);

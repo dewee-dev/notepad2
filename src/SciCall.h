@@ -29,7 +29,27 @@ extern "C"
 LRESULT SCI_METHOD Scintilla_DirectFunction(HANDLE handle, UINT msg, WPARAM wParam, LPARAM lParam);
 #define SciCall(m, w, l)	Scintilla_DirectFunction(g_hScintilla, (m), (w), (l))
 
+namespace Scintilla {
+enum class CharacterClass { space, newLine, punctuation, word, cjkWord }; // ILexer.h
+
+namespace Internal {
+struct DBCSByteMask { // CharClassify.h
+	uint8_t byteMask[256];
+	bool IsLeadByte(unsigned char ch) const noexcept {
+		return byteMask[ch] & true;
+	}
+	bool IsTrailByte(unsigned char ch) const noexcept {
+		return byteMask[ch] & 2;
+	}
+};
+
+}
+}
+
+using Sci_Pixels = int;
 using Sci_MarkerMask = unsigned int;
+using Scintilla::CharacterClass;
+using Scintilla::Internal::DBCSByteMask;
 
 constexpr COLORREF ColorAlpha(COLORREF rgb, UINT alpha) noexcept {
 	return rgb | (alpha << 24);
@@ -127,15 +147,6 @@ inline int SciCall_GetCharacterAt(Sci_Position position) noexcept {
 	return static_cast<int>(SciCall(SCI_GETCHARACTERANDWIDTH, position, 0));
 }
 
-// same as CharacterClass in ILexer.h
-enum CharacterClass {
-	CharacterClass_Space,
-	CharacterClass_NewLine,
-	CharacterClass_Punctuation,
-	CharacterClass_Word,
-	CharacterClass_CJKWord
-};
-
 inline CharacterClass SciCall_GetCharacterClass(UINT character) noexcept {
 	return static_cast<CharacterClass>(SciCall(SCI_GETCHARACTERCLASS, character, 0));
 }
@@ -162,10 +173,6 @@ inline void SciCall_TargetWholeDocument() noexcept {
 	SciCall(SCI_TARGETWHOLEDOCUMENT, 0, 0);
 }
 
-inline void SciCall_SetSearchFlags(int searchFlags) noexcept {
-	SciCall(SCI_SETSEARCHFLAGS, searchFlags, 0);
-}
-
 inline Sci_Position SciCall_SearchInTarget(Sci_Position length, const char *text) noexcept {
 	return SciCall(SCI_SEARCHINTARGET, length, AsInteger<LPARAM>(text));
 }
@@ -178,12 +185,12 @@ inline Sci_Position SciCall_ReplaceTargetRE(Sci_Position length, const char *tex
 	return SciCall(SCI_REPLACETARGETRE, length, AsInteger<LPARAM>(text));
 }
 
-inline Sci_Position SciCall_FindTextFull(int searchFlags, Sci_TextToFindFull *ft) noexcept {
+inline Sci_Position SciCall_FindTextFull(UINT searchFlags, Sci_TextToFindFull *ft) noexcept {
 	return SciCall(SCI_FINDTEXTFULL, searchFlags, AsInteger<LPARAM>(ft));
 }
 
-inline Sci_Position SciCall_ReplaceTargetEx(BOOL regex, Sci_Position length, const char *text) noexcept {
-	return SciCall(regex ? SCI_REPLACETARGETRE : SCI_REPLACETARGET, length, AsInteger<LPARAM>(text));
+inline Sci_Position SciCall_ReplaceTargetEx(UINT msg, Sci_Position length, const char *text) noexcept {
+	return SciCall(msg, length, AsInteger<LPARAM>(text));
 }
 
 // Overtype
@@ -398,32 +405,36 @@ inline Sci_Position SciCall_PositionAfter(Sci_Position position) noexcept {
 	return SciCall(SCI_POSITIONAFTER, position, 0);
 }
 
-inline int SciCall_TextWidth(int style, const char *text) noexcept {
-	return static_cast<int>(SciCall(SCI_TEXTWIDTH, style, AsInteger<LPARAM>(text)));
+inline Sci_Pixels SciCall_TextWidth(int style, const char *text) noexcept {
+	return static_cast<Sci_Pixels>(SciCall(SCI_TEXTWIDTH, style, AsInteger<LPARAM>(text)));
 }
 
-inline int SciCall_TextHeight() noexcept {
-	return static_cast<int>(SciCall(SCI_TEXTHEIGHT, 0, 0));
+inline Sci_Pixels SciCall_TextHeight() noexcept {
+	return static_cast<Sci_Pixels>(SciCall(SCI_TEXTHEIGHT, 0, 0));
 }
 
-inline Sci_Position SciCall_GetColumn(Sci_Position position) noexcept {
-	return SciCall(SCI_GETCOLUMN, position, 0);
+inline Sci_Position SciCall_GetColumn(Sci_Position position, Sci_Line line = -1) noexcept {
+	return SciCall(SCI_GETCOLUMN, position, line);
 }
 
 inline Sci_Position SciCall_FindColumn(Sci_Line line, Sci_Position column) noexcept {
 	return SciCall(SCI_FINDCOLUMN, line, column);
 }
 
-inline Sci_Position SciCall_PositionFromPoint(int x, int y) noexcept {
+inline Sci_Position SciCall_FindColumnEx(unsigned type, const Sci_CharacterRangeFull *chrg) noexcept {
+	return SciCall(SCI_FINDCOLUMNEX, type, AsInteger<LPARAM>(chrg));
+}
+
+inline Sci_Position SciCall_PositionFromPoint(Sci_Pixels x, Sci_Pixels y) noexcept {
 	return SciCall(SCI_POSITIONFROMPOINT, x, y);
 }
 
-inline int SciCall_PointXFromPosition(Sci_Position pos) noexcept {
-	return static_cast<int>(SciCall(SCI_POINTXFROMPOSITION, 0, pos));
+inline Sci_Pixels SciCall_PointXFromPosition(Sci_Position pos) noexcept {
+	return static_cast<Sci_Pixels>(SciCall(SCI_POINTXFROMPOSITION, 0, pos));
 }
 
-inline int SciCall_PointYFromPosition(Sci_Position pos) noexcept {
-	return static_cast<int>(SciCall(SCI_POINTYFROMPOSITION, 0, pos));
+inline Sci_Pixels SciCall_PointYFromPosition(Sci_Position pos) noexcept {
+	return static_cast<Sci_Pixels>(SciCall(SCI_POINTYFROMPOSITION, 0, pos));
 }
 
 inline void SciCall_ChooseCaretX() noexcept {
@@ -526,12 +537,12 @@ inline Sci_Line SciCall_SetFirstVisibleLine(Sci_Line displayLine) noexcept {
 	return SciCall(SCI_SETFIRSTVISIBLELINE, displayLine, 0);
 }
 
-inline void SciCall_SetXOffset(int xOffset) noexcept {
+inline void SciCall_SetXOffset(Sci_Pixels xOffset) noexcept {
 	SciCall(SCI_SETXOFFSET, xOffset, 0);
 }
 
-inline int SciCall_GetXOffset() noexcept {
-	return static_cast<int>(SciCall(SCI_GETXOFFSET, 0, 0));
+inline Sci_Pixels SciCall_GetXOffset() noexcept {
+	return static_cast<Sci_Pixels>(SciCall(SCI_GETXOFFSET, 0, 0));
 }
 
 inline void SciCall_LineScroll(Sci_Position columns, Sci_Line lines) noexcept {
@@ -542,7 +553,7 @@ inline void SciCall_ScrollCaret() noexcept {
 	SciCall(SCI_SCROLLCARET, 0, 0);
 }
 
-inline void SciCall_SetXCaretPolicy(int caretPolicy, int caretSlop) noexcept {
+inline void SciCall_SetXCaretPolicy(int caretPolicy, Sci_Pixels caretSlop) noexcept {
 	SciCall(SCI_SETXCARETPOLICY, caretPolicy, caretSlop);
 }
 
@@ -564,15 +575,15 @@ inline void SciCall_SetViewWS(int viewWS) noexcept {
 	SciCall(SCI_SETVIEWWS, viewWS, 0);
 }
 
-inline void SciCall_SetWhitespaceSize(int size) noexcept {
+inline void SciCall_SetWhitespaceSize(Sci_Pixels size) noexcept {
 	SciCall(SCI_SETWHITESPACESIZE, size, 0);
 }
 
-inline void SciCall_SetExtraAscent(int extraAscent) noexcept {
+inline void SciCall_SetExtraAscent(Sci_Pixels extraAscent) noexcept {
 	SciCall(SCI_SETEXTRAASCENT, extraAscent, 0);
 }
 
-inline void SciCall_SetExtraDescent(int extraDescent) noexcept {
+inline void SciCall_SetExtraDescent(Sci_Pixels extraDescent) noexcept {
 	SciCall(SCI_SETEXTRADESCENT, extraDescent, 0);
 }
 
@@ -587,10 +598,7 @@ inline void BeginWaitCursor() noexcept {
 }
 
 inline void EndWaitCursor() noexcept {
-	POINT pt;
 	SciCall_SetCursor(SC_CURSORNORMAL);
-	GetCursorPos(&pt);
-	SetCursorPos(pt.x, pt.y);
 }
 
 // Line endings
@@ -619,6 +627,10 @@ inline Sci_Position SciCall_WordStartPosition(Sci_Position position, bool onlyWo
 
 inline Sci_Position SciCall_WordEndPosition(Sci_Position position, bool onlyWordCharacters) noexcept {
 	return SciCall(SCI_WORDENDPOSITION, position, onlyWordCharacters);
+}
+
+inline Sci_Position SciCall_IsRangeWord(Sci_Position start, Sci_Position end) noexcept {
+	return SciCall(SCI_ISRANGEWORD, start, end);
 }
 
 inline void SciCall_SetCharClassesEx(int length, const unsigned char *characters) noexcept {
@@ -779,7 +791,7 @@ inline void SciCall_SetCaretLineLayer(int layer) noexcept {
 	SciCall(SCI_SETCARETLINELAYER, layer, 0);
 }
 
-inline void SciCall_SetCaretLineFrame(int width) noexcept {
+inline void SciCall_SetCaretLineFrame(Sci_Pixels width) noexcept {
 	SciCall(SCI_SETCARETLINEFRAME, width, 0);
 }
 
@@ -799,7 +811,7 @@ inline void SciCall_SetCaretStyle(int caretStyle) noexcept {
 	SciCall(SCI_SETCARETSTYLE, caretStyle, 0);
 }
 
-inline void SciCall_SetCaretWidth(int pixelWidth) noexcept {
+inline void SciCall_SetCaretWidth(Sci_Pixels pixelWidth) noexcept {
 	SciCall(SCI_SETCARETWIDTH, pixelWidth, 0);
 }
 
@@ -823,12 +835,12 @@ inline void SciCall_SetMarginType(int margin, int marginType) noexcept {
 	SciCall(SCI_SETMARGINTYPEN, margin, marginType);
 }
 
-inline void SciCall_SetMarginWidth(int margin, int pixelWidth) noexcept {
+inline void SciCall_SetMarginWidth(int margin, Sci_Pixels pixelWidth) noexcept {
 	SciCall(SCI_SETMARGINWIDTHN, margin, pixelWidth);
 }
 
-inline int SciCall_GetMarginWidth(int margin) noexcept {
-	return static_cast<int>(SciCall(SCI_GETMARGINWIDTHN, margin, 0));
+inline Sci_Pixels SciCall_GetMarginWidth(int margin) noexcept {
+	return static_cast<Sci_Pixels>(SciCall(SCI_GETMARGINWIDTHN, margin, 0));
 }
 
 inline void SciCall_SetMarginMask(int margin, int mask) noexcept {
@@ -863,6 +875,10 @@ inline void SciCall_SetCodePage(UINT codePage) noexcept {
 
 inline UINT SciCall_GetCodePage() noexcept {
 	return static_cast<UINT>(SciCall(SCI_GETCODEPAGE, 0, 0));
+}
+
+inline UINT SciCall_GetDBCSByteMask(const DBCSByteMask* &byteMask) noexcept {
+	return static_cast<UINT>(SciCall(SCI_GETCODEPAGE, AsInteger<WPARAM>(&byteMask), 0));
 }
 
 inline void SciCall_SetTechnology(int technology) noexcept {
@@ -913,11 +929,11 @@ inline void SciCall_BraceBadLightIndicator(bool useSetting, int indicator) noexc
 }
 
 inline Sci_Position SciCall_BraceMatch(Sci_Position pos) noexcept {
-	return SciCall(SCI_BRACEMATCH, pos, 0);
+	return SciCall(SCI_BRACEMATCH, pos, -1);
 }
 
 inline Sci_Position SciCall_BraceMatchNext(Sci_Position pos, Sci_Position startPos) noexcept {
-	return SciCall(SCI_BRACEMATCHNEXT, pos, startPos);
+	return SciCall(SCI_BRACEMATCH, pos, startPos);
 }
 
 // Tabs and Indentation Guides
@@ -930,7 +946,7 @@ inline int SciCall_GetTabWidth() noexcept {
 	return static_cast<int>(SciCall(SCI_GETTABWIDTH, 0, 0));
 }
 
-inline void SciCall_SetTabMinimumWidth(int pixels) noexcept {
+inline void SciCall_SetTabMinimumWidth(Sci_Pixels pixels) noexcept {
 	SciCall(SCI_SETTABMINIMUMWIDTH, pixels, 0);
 }
 
@@ -1008,7 +1024,7 @@ inline void SciCall_MarkerSetLayer(int markerNumber, int layer) noexcept {
 	SciCall(SCI_MARKERSETLAYER, markerNumber, layer);
 }
 
-inline void SciCall_MarkerSetStrokeWidth(int markerNumber, int hundredths) noexcept {
+inline void SciCall_MarkerSetStrokeWidth(int markerNumber, Sci_Pixels hundredths) noexcept {
 	SciCall(SCI_MARKERSETSTROKEWIDTH, markerNumber, hundredths);
 }
 
@@ -1062,7 +1078,7 @@ inline void SciCall_IndicSetOutlineAlpha(int indicator, int alpha) noexcept {
 	SciCall(SCI_INDICSETOUTLINEALPHA, indicator, alpha);
 }
 
-inline void SciCall_IndicSetStrokeWidth(int indicator, int hundredths) noexcept {
+inline void SciCall_IndicSetStrokeWidth(int indicator, Sci_Pixels hundredths) noexcept {
 	SciCall(SCI_INDICSETSTROKEWIDTH, indicator, hundredths);
 }
 
@@ -1162,7 +1178,7 @@ inline void SciCall_CallTipSetFore(COLORREF fore) noexcept {
 	SciCall(SCI_CALLTIPSETFORE, fore, 0);
 }
 
-inline void SciCall_CallTipUseStyle(int tabSize) noexcept {
+inline void SciCall_CallTipUseStyle(Sci_Pixels tabSize) noexcept {
 	SciCall(SCI_CALLTIPUSESTYLE, tabSize, 0);
 }
 
@@ -1410,7 +1426,7 @@ inline int SciCall_GetWrapIndentMode() noexcept {
 	return static_cast<int>(SciCall(SCI_GETWRAPINDENTMODE, 0, 0));
 }
 
-inline void SciCall_SetWrapStartIndent(int indent) noexcept {
+inline void SciCall_SetWrapStartIndent(Sci_Pixels indent) noexcept {
 	SciCall(SCI_SETWRAPSTARTINDENT, indent, 0);
 }
 
@@ -1418,7 +1434,7 @@ inline void SciCall_SetLayoutCache(int cacheMode) noexcept {
 	SciCall(SCI_SETLAYOUTCACHE, cacheMode, 0);
 }
 
-inline void SciCall_LinesSplit(int pixelWidth) noexcept {
+inline void SciCall_LinesSplit(Sci_Pixels pixelWidth) noexcept {
 	SciCall(SCI_LINESSPLIT, pixelWidth, 0);
 }
 

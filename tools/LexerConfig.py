@@ -45,6 +45,7 @@ extra_word_char: extra identifier characters excludes dot.
 ignore_word_style: word styles to be ignored for auto-completion word scanning.
 autoc_extra_keyword: [deprecated] extra keyword for auto-completion.
 auto_ident_word_style: word styles that supports auto ident.
+keyword_attr: default keyword attribute.
 plain_text_file: treat as plain text file for auto-completion.
 plain_text_style: plain text styles for auto-completion.
 string_style_range: first and last string or regex style for auto-completion.
@@ -115,6 +116,7 @@ LexerConfigMap = {
 		'escape_char_start': NoEscapeCharacter,
 		'extra_word_char': '-',
 		'plain_text_file': True,
+		'keyword_attr': KeywordAttr.NoLexer,
 	},
 	'NP2LEX_2NDTEXTFILE': {
 		'indent_based_folding': True,
@@ -122,6 +124,7 @@ LexerConfigMap = {
 		'escape_char_start': NoEscapeCharacter,
 		'extra_word_char': '-',
 		'plain_text_file': True,
+		'keyword_attr': KeywordAttr.NoLexer,
 	},
 	'NP2LEX_ANSI': {
 		'default_encoding': 'DOS-437',
@@ -131,6 +134,7 @@ LexerConfigMap = {
 		'escape_char_start': NoEscapeCharacter,
 		'extra_word_char': '-',
 		'plain_text_file': True,
+		'keyword_attr': KeywordAttr.NoLexer,
 	},
 
 	'NP2LEX_ABAQUS': {
@@ -307,11 +311,13 @@ LexerConfigMap = {
 		'line_comment_string': '#',
 		'comment_style_marker': 'SCE_CONF_COMMENT',
 		'operator_style': ['SCE_CONF_OPERATOR'],
+		'keyword_attr': KeywordAttr.NoLexer,
 	},
 	'NP2LEX_CSV': {
 		'escape_char_start': NoEscapeCharacter,
 		'extra_word_char': '-',
 		'plain_text_file': True,
+		'keyword_attr': KeywordAttr.NoLexer,
 	},
 	'NP2LEX_CPP': {
 		'cpp_style_comment': True,
@@ -403,6 +409,7 @@ LexerConfigMap = {
 		'default_fold_level': ['command', '[file]', 'diff'],
 		'escape_char_start': NoEscapeCharacter,
 		'plain_text_file': True,
+		'keyword_attr': KeywordAttr.NoLexer,
 	},
 
 	'NP2LEX_ELIXIR': {
@@ -555,16 +562,20 @@ LexerConfigMap = {
 		'line_comment_string': ['//', "'", '#'],
 		'block_comment_string': [('<!--', '-->'), ('/*', '*/'), ('--', '--')],
 		'comment_style_list': ['SCE_H_COMMENT', 'SCE_H_XCCOMMENT', 'SCE_H_SGML_COMMENT', 'SCE_H_SGML_1ST_PARAM_COMMENT',
-			'SCE_HJ_COMMENT', 'SCE_HJ_COMMENTLINE', 'SCE_HJ_COMMENTDOC',
-			'SCE_HJA_COMMENT', 'SCE_HJA_COMMENTLINE', 'SCE_HJA_COMMENTDOC',
-			'SCE_HB_COMMENTLINE', 'SCE_HBA_COMMENTLINE'],
+			'js_style(SCE_JS_COMMENTLINE)', 'js_style(SCE_JS_COMMENTBLOCK)', 'js_style(SCE_JS_COMMENTBLOCKDOC)',
+			'js_style(SCE_JS_COMMENTTAGAT)', 'js_style(SCE_JS_TASKMARKER)',
+			'css_style(SCE_CSS_COMMENTBLOCK)', 'css_style(SCE_CSS_CDO_CDC)',
+			'SCE_HB_COMMENTLINE'],
 		'default_fold_level': ['level1', 'level2', 'level13', 'level4'],
 		#'escape_char_start': NoEscapeCharacter, # backslash for embedded script or style
+		'escape_char_style': 'css_style(SCE_CSS_ESCAPECHAR)',
+		'operator_style': ['css_style(SCE_CSS_OPERATOR)', 'SCE_HB_OPERATOR'],
 		'extra_word_char': '-:',
 		'string_style_list': ['SCE_H_DOUBLESTRING', 'SCE_H_SINGLESTRING', 'SCE_H_SGML_DOUBLESTRING', 'SCE_H_SGML_SIMPLESTRING',
-			'SCE_HJ_DOUBLESTRING', 'SCE_HJ_SINGLESTRING', 'SCE_HJ_REGEX', 'SCE_HJ_TEMPLATELITERAL',
-			'SCE_HJA_DOUBLESTRING', 'SCE_HJA_SINGLESTRING', 'SCE_HJA_REGEX', 'SCE_HJA_TEMPLATELITERAL',
-			'SCE_HB_STRING', 'SCE_HBA_STRING'],
+			'js_style(SCE_JS_STRING_SQ)', 'js_style(SCE_JS_STRING_DQ)',
+			'js_style(SCE_JS_TEMPLATELITERAL)', 'js_style(SCE_JS_REGEX)', 'js_style(SCE_JS_ESCAPECHAR)',
+			'css_style(SCE_CSS_ESCAPECHAR)', 'css_style(SCE_CSS_STRING_SQ)', 'css_style(SCE_CSS_STRING_DQ)', 'css_style(SCE_CSS_URL)',
+			'SCE_HB_STRING'],
 		'plain_text_style': ['SCE_H_DEFAULT'],
 	},
 
@@ -573,6 +584,7 @@ LexerConfigMap = {
 		'comment_style_marker': 'SCE_PROPS_COMMENT',
 		'default_fold_level': ['section', 'comment'],
 		'escape_char_start': NoEscapeCharacter,
+		'keyword_attr': KeywordAttr.NoLexer,
 	},
 	'NP2LEX_INNOSETUP': {
 		'line_comment_string': [';', '//'],
@@ -677,11 +689,12 @@ LexerConfigMap = {
 		'block_comment_string': ('\\begin{comment}', '\\end{comment}'),
 		'block_comment_on_new_line': True,
 		'comment_style_marker': 'SCE_L_COMMENT2',
-		'escape_char_start': '^',
+		'default_fold_level': ['chapter', 'section', 'subsection'],
 		'escape_char_style': 'SCE_L_SPECIAL',
 		'escape_punctuation': True,
+		'none_quote_style': 'SCE_L_CATCODE',
 		'operator_style': ['SCE_L_OPERATOR'],
-		'plain_text_style': ['SCE_L_DEFAULT', 'SCE_L_VERBATIM2', 'SCE_L_VERBATIM',
+		'plain_text_style': ['SCE_L_DEFAULT', 'SCE_L_VERBATIM2', 'SCE_L_VERBATIM', 'SCE_L_TITLE_TOC',
 			'SCE_L_TITLE', 'SCE_L_CHAPTER', 'SCE_L_SECTION', 'SCE_L_SECTION1', 'SCE_L_SECTION2'],
 	},
 	'NP2LEX_LISP': {
@@ -1021,11 +1034,12 @@ LexerConfigMap = {
 		'default_fold_level': ['function'],
 		'escape_char_style': 'SCE_SQL_ESCAPECHAR',
 		'character_prefix': ['q', 'Q', 'x', 'X', 'b', 'B'],
-		'operator_style': ['SCE_SQL_OPERATOR'], # ignore q'{SCE_SQL_QOPERATOR}'
+		'operator_style': ['SCE_SQL_OPERATOR'],
 		'extra_word_char': '$@',
 		'ignore_word_style': ['SCE_SQL_WORD', 'SCE_SQL_WORD2', 'SCE_SQL_USER1', 'SCE_SQL_HEX', 'SCE_SQL_HEX2'],
 		'auto_ident_word_style': ['SCE_SQL_WORD'],
-		'string_style_range': ['SCE_SQL_STRING_DQ', 'SCE_SQL_BIT'],
+		'string_style_range': ['SCE_SQL_QOPERATOR', 'SCE_SQL_BIT'],
+		'raw_string_style': ['SCE_SQL_QOPERATOR'],
 	},
 	'NP2LEX_SWIFT': {
 		'cpp_style_comment': True,
@@ -1097,7 +1111,8 @@ LexerConfigMap = {
 		'operator_style': ['SCE_TYPST_OPERATOR'],
 		'extra_word_char': '-',
 		'string_style_range': ['SCE_TYPST_STRING', 'SCE_TYPST_ESCAPECHAR'],
-		'plain_text_style': ['SCE_TYPST_DEFAULT'],
+		'plain_text_style': ['SCE_TYPST_DEFAULT', 'SCE_TYPST_HEADER1', 'SCE_TYPST_HEADER2', 'SCE_TYPST_HEADER3',
+			'SCE_TYPST_HEADER4', 'SCE_TYPST_HEADER5', 'SCE_TYPST_HEADER6'],
 	},
 
 	'NP2LEX_VBSCRIPT': {
@@ -1163,7 +1178,7 @@ LexerConfigMap = {
 	'NP2LEX_WASM': {
 		'line_comment_string': ';;',
 		'block_comment_string': ('(;', ';)'),
-		'comment_style_marker': 'SCE_WASM_TASKMARKER',
+		'comment_style_marker': 'SCE_WASM_COMMENTBLOCK',
 		'escape_char_style': 'SCE_WASM_ESCAPECHAR',
 		'operator_style': ['SCE_WASM_OPERATOR'],
 		'extra_word_char': '-@%$',
@@ -1182,16 +1197,20 @@ LexerConfigMap = {
 		'line_comment_string': ['//', "'", '#'],
 		'block_comment_string': [('<!--', '-->'), ('/*', '*/'), ('--', '--')],
 		'comment_style_list': ['SCE_H_COMMENT', 'SCE_H_XCCOMMENT', 'SCE_H_SGML_COMMENT', 'SCE_H_SGML_1ST_PARAM_COMMENT',
-			'SCE_HJ_COMMENT', 'SCE_HJ_COMMENTLINE', 'SCE_HJ_COMMENTDOC',
-			'SCE_HJA_COMMENT', 'SCE_HJA_COMMENTLINE', 'SCE_HJA_COMMENTDOC',
-			'SCE_HB_COMMENTLINE', 'SCE_HBA_COMMENTLINE'],
+			'js_style(SCE_JS_COMMENTLINE)', 'js_style(SCE_JS_COMMENTBLOCK)', 'js_style(SCE_JS_COMMENTBLOCKDOC)',
+			'js_style(SCE_JS_COMMENTTAGAT)', 'js_style(SCE_JS_TASKMARKER)',
+			'css_style(SCE_CSS_COMMENTBLOCK)', 'css_style(SCE_CSS_CDO_CDC)',
+			'SCE_HB_COMMENTLINE'],
 		'default_fold_level': ['level1', 'level2', 'level13', 'level4'],
 		'escape_char_start': NoEscapeCharacter,
+		'escape_char_style': 'css_style(SCE_CSS_ESCAPECHAR)',
+		'operator_style': ['css_style(SCE_CSS_OPERATOR)', 'SCE_HB_OPERATOR'],
 		'extra_word_char': '-:',
 		'string_style_list': ['SCE_H_DOUBLESTRING', 'SCE_H_SINGLESTRING', 'SCE_H_SGML_DOUBLESTRING', 'SCE_H_SGML_SIMPLESTRING',
-			'SCE_HJ_DOUBLESTRING', 'SCE_HJ_SINGLESTRING', 'SCE_HJ_REGEX', 'SCE_HJ_TEMPLATELITERAL',
-			'SCE_HJA_DOUBLESTRING', 'SCE_HJA_SINGLESTRING', 'SCE_HJA_REGEX', 'SCE_HJA_TEMPLATELITERAL',
-			'SCE_HB_STRING', 'SCE_HBA_STRING'],
+			'js_style(SCE_JS_STRING_SQ)', 'js_style(SCE_JS_STRING_DQ)',
+			'js_style(SCE_JS_TEMPLATELITERAL)', 'js_style(SCE_JS_REGEX)', 'js_style(SCE_JS_ESCAPECHAR)',
+			'css_style(SCE_CSS_ESCAPECHAR)', 'css_style(SCE_CSS_STRING_SQ)', 'css_style(SCE_CSS_STRING_DQ)', 'css_style(SCE_CSS_URL)',
+			'SCE_HB_STRING'],
 		'plain_text_style': ['SCE_H_DEFAULT'],
 	},
 	'NP2LEX_YAML': {
@@ -1393,7 +1412,7 @@ def BuildLexerConfigContent(rid, keywordAttr):
 			output.append(f'{indent}{prefix} KeywordAttr{bit}({index}, {expr}) // {comment}')
 			prefix = '|'
 	else:
-		expr = get_enum_flag_expr(KeywordAttr.Default)
+		expr = get_enum_flag_expr(config.get('keyword_attr', KeywordAttr.Default))
 		output.append(indent + expr)
 
 	# style marker

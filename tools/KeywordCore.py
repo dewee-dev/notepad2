@@ -14,7 +14,7 @@ SinglyWordMap = {
 	'properties': 'property',
 	'alias': 'alias',
 }
-
+KEYWORDSET_MAX = 15
 AllKeywordAttrList = {}
 # for keyword list used in AutoC_AddSpecWord()
 SpecialKeywordIndexList = {}
@@ -68,7 +68,7 @@ def build_enum_name(comment):
 	items = [item if item[0].isupper() else item.title() for item in items]
 	return ''.join(items)
 
-def BuildKeywordContent(rid, lexer, keywordList, keywordCount=16):
+def BuildKeywordContent(rid, lexer, keywordList, reservedCount=0):
 	output = []
 	attrList = []
 	indexList = LexerKeywordIndexList.setdefault(lexer, {})
@@ -81,7 +81,9 @@ def BuildKeywordContent(rid, lexer, keywordList, keywordCount=16):
 			items = set(items)
 			for item in items: # check ASCII graphic character
 				if any(c <= ' ' or c > '~' for c in item):
-					print(rid, item)
+					print(f'{rid} {comment}: {item}')
+				# if len(item) <= 1:
+				# 	print(f'{rid} {comment}: {item}')
 			makeLower = False
 			if attr & KeywordAttr.MakeLower:
 				lowercase = to_lower(items)
@@ -91,7 +93,7 @@ def BuildKeywordContent(rid, lexer, keywordList, keywordCount=16):
 				else:
 					if len(items) != len(unique):
 						duplicate = find_duplicate_lower(items)
-						print(rid, comment, 'duplicate words:', duplicate)
+						print(f'{rid} {comment} duplicate words: {duplicate}')
 					makeLower = True
 					items = [item[1] for item in sorted(zip(lowercase, items, strict=True))]
 			if not makeLower:
@@ -102,17 +104,18 @@ def BuildKeywordContent(rid, lexer, keywordList, keywordCount=16):
 		if lines:
 			length = len(lines) + sum(len(line) for line in lines)
 			if length >= 0xffff:
-				print(rid, comment, 'string exceeds 64 KiB:', length)
+				print(f'{rid} {comment} string exceeds 64 KiB: {length}')
 			if attr & KeywordAttr.PrefixSpace:
 				attr &= ~KeywordAttr.PrefixSpace
 				lines[0] = ' ' + lines[0]
 			output.extend('"' + line + ' "' for line in lines)
 		else:
 			output.append('nullptr')
-		if index + 1 < keywordCount:
-			output.append("")
+		output.append("")
 
 		indexName = build_enum_name(comment)
+		if index >= KEYWORDSET_MAX:
+			attr |= KeywordAttr.NoLexer
 		# keyword index for lexer
 		if (attr & KeywordAttr.NoLexer) == 0 and comment != 'unused':
 			if items:
@@ -135,26 +138,28 @@ def BuildKeywordContent(rid, lexer, keywordList, keywordCount=16):
 		# keyword attribute for lexer
 		if lines and (attr & KeywordAttr.NoLexer) == 0:
 			attr |= KeywordAttr.PreSorted
-		if attr != KeywordAttr.Default:
+		if attr != KeywordAttr.Default and index <= KEYWORDSET_MAX:
 			attrList.append((index, attr, comment))
 
 	if maxKeywordLen:
 		maxKeywordLen += 2 # extra + '\0'
 		if '@' not in indexList or indexList['@'][0] < maxKeywordLen:
 			indexList['@'] = (maxKeywordLen, 0)
-	count = keywordCount - len(keywordList)
-	if count:
-		output.append(", nullptr" * count)
+	index = len(keywordList)
+	while reservedCount != 0 and index <= KEYWORDSET_MAX:
+		attrList.append((index, KeywordAttr.NoLexer, 'Code Snippet'))
+		index += 1
+		reservedCount -= 1
 	if attrList:
 		AllKeywordAttrList[rid] = attrList
 	return output, attrList
 
-def UpdateKeywordFile(rid, path, lexer, keywordList, keywordCount=16, suffix=''):
+def UpdateKeywordFile(rid, path, lexer, keywordList, reservedCount=0, suffix=''):
 	if keywordList is None:
 		return
 	attrList = []
 	if keywordList:
-		output, attrList = BuildKeywordContent(rid, lexer, keywordList, keywordCount=keywordCount)
+		output, attrList = BuildKeywordContent(rid, lexer, keywordList, reservedCount=reservedCount)
 		if len(output) > 1:
 			Regenerate(path, '//' + suffix, output)
 
@@ -1342,6 +1347,8 @@ def parse_html_api_file(path):
 		('tag', keywords, KeywordAttr.Special),
 		('void tag', HtmlVoidTagList, KeywordAttr.NoAutoComp | KeywordAttr.PrefixSpace),
 		('JavaScript', JavaScriptKeywordMap['keywords'], KeywordAttr.NoAutoComp),
+		('JavaScript directive', JavaScriptKeywordMap['directive'], KeywordAttr.NoAutoComp),
+		('JavaScript class', JavaScriptKeywordMap['class'], KeywordAttr.NoAutoComp),
 		('VBScript', VBScriptKeyword, KeywordAttr.MakeLower | KeywordAttr.NoAutoComp),
 		('SGML', SGMLKeyword, KeywordAttr.Default),
 		('attribute', attributes, KeywordAttr.Special),
@@ -1737,6 +1744,15 @@ def parse_kotlin_api_file(path):
 		('KDoc', keywordMap['kdoc'], KeywordAttr.NoLexer | KeywordAttr.NoAutoComp | KeywordAttr.Special),
 	]
 
+def parse_latex_api_file(path):
+	doc = read_file(path)
+	commands = re.findall(r'\\(\w+)', doc)
+	misc = []
+	return [
+		('commands', commands, KeywordAttr.NoLexer | KeywordAttr.Special),
+		('misc', misc, KeywordAttr.NoLexer)
+	]
+
 def parse_lua_api_file(path):
 	sections = read_api_file(path, '--')
 	keywordMap = {}
@@ -1955,6 +1971,8 @@ def parse_php_api_file(path):
 		('misc', keywordMap['misc'], KeywordAttr.NoLexer),
 		('void tag', HtmlVoidTagList, KeywordAttr.NoAutoComp | KeywordAttr.PrefixSpace),
 		('JavaScript', JavaScriptKeywordMap['keywords'], KeywordAttr.NoAutoComp),
+		('JavaScript directive', JavaScriptKeywordMap['directive'], KeywordAttr.NoAutoComp),
+		('JavaScript class', JavaScriptKeywordMap['class'], KeywordAttr.NoAutoComp),
 		('phpdoc', keywordMap['phpdoc'], KeywordAttr.NoLexer | KeywordAttr.NoAutoComp | KeywordAttr.Special),
 	]
 
@@ -2809,7 +2827,7 @@ def parse_wasm_lexer_keywords(path):
 		('keywords', keywordMap['keywords'], KeywordAttr.Default),
 		('type', keywordMap['type'], KeywordAttr.Default),
 		('instruction', keywordMap['instruction'], KeywordAttr.Default),
-		('full instruction', keywordMap['full instruction'], KeywordAttr.NoLexer),
+		('full instruction', [], KeywordAttr.NoLexer),
 	]
 
 def parse_winhex_api_file(path):
@@ -2847,6 +2865,8 @@ def parse_xml_api_file(path):
 		('tag', [], KeywordAttr.Default),
 		('void tag', [], KeywordAttr.Default),
 		('JavaScript', [], KeywordAttr.Default),
+		('JavaScript directive', [], KeywordAttr.Default),
+		('JavaScript class', [], KeywordAttr.Default),
 		('VBScript', [], KeywordAttr.Default),
 		('SGML', keywords, KeywordAttr.Default),
 		('attribute', attributes, KeywordAttr.NoLexer),
@@ -2884,16 +2904,23 @@ def parse_zig_api_file(path):
 		('function', keywordMap['functions'], KeywordAttr.NoLexer),
 	]
 
-def UpdateLexerKeywordAttr(indexPath, lexerPath):
+def UpdateLexerKeywordAttr(indexPath, matchPath, lexerPath):
 	#print(SinglyWordMap)
 	output = []
+	matchIndex = []
 	if AllKeywordAttrList:
 		output.append('enum {')
+		matchIndex.append('enum {')
 		for prefix, group in sorted(SpecialKeywordIndexList.items()):
 			items = sorted(group.items(), key=lambda m: m[1])
-			output.extend(f'\t{prefix}{key} = {value},' for key, value in items)
+			lines = [f'\t{prefix}{key} = {value},' for key, value in items]
+			output.extend(lines)
+			if prefix in ('CPPKeywordIndex_'):
+				matchIndex.extend(lines)
+		matchIndex.append('};')
 		output.append('};')
 	Regenerate(indexPath, '//KeywordIndex', output)
+	Regenerate(matchPath, '//KeywordIndex', matchIndex)
 
 	for lexer, indexList in LexerKeywordIndexList.items():
 		output = []

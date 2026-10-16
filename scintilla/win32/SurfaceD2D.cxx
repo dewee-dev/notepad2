@@ -17,6 +17,7 @@
 #include <climits>
 
 #include <stdexcept>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -80,9 +81,9 @@ void LoadD2DOnce() noexcept
 	// with LOAD_LIBRARY_SEARCH_SYSTEM32.
 
 	using D2D1CreateFactorySig = HRESULT(WINAPI *)(D2D1_FACTORY_TYPE factoryType, REFIID riid,
-		CONST D2D1_FACTORY_OPTIONS *pFactoryOptions, IUnknown **factory);
+		CONST D2D1_FACTORY_OPTIONS *pFactoryOptions, IUnknown **factory) noexcept;
 	using DWriteCreateFactorySig = HRESULT(WINAPI *)(DWRITE_FACTORY_TYPE factoryType, REFIID iid,
-		IUnknown **factory);
+		IUnknown **factory) noexcept;
 
 	hDLLD2D = ::LoadLibraryEx(L"d2d1.dll", {}, kSystemLibraryLoadFlags);
 	if (hDLLD2D) {
@@ -223,6 +224,7 @@ FontWin::FontWin(const FontParameters &fp) {
 		DWRITE_FONT_WEIGHT weight = static_cast<DWRITE_FONT_WEIGHT>(fp.weight);
 		DWRITE_FONT_STYLE style = fp.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;
 		DWRITE_FONT_STRETCH stretch = static_cast<DWRITE_FONT_STRETCH>(fp.stretch);
+		// font weight is already validated inside Style_StrGetFontWeight()
 		if (!GetDWriteFontProperties(lf, wsFamily, weight, style, stretch)) {
 			wsFamily = WStringFromUTF8(fp.faceName);
 		}

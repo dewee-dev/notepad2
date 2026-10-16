@@ -91,8 +91,14 @@ public:
 	size_t Length() const noexcept {
 		return s.length();
 	}
+	std::string_view AsView() const noexcept {
+		return s;
+	}
 	size_t LengthWithTerminator() const noexcept {
 		return s.length() + 1;
+	}
+	std::string_view AsViewWithTerminator() const noexcept {
+		return {s.c_str(), s.length() + 1};
 	}
 	bool Empty() const noexcept {
 		return s.empty();
@@ -148,11 +154,11 @@ struct WrapPending {
 };
 
 struct CaretPolicySlop {
-	Scintilla::CaretPolicy policy;
+	Scintilla::CaretPolicy policy;	// Combination from CaretPolicy::Slop, CaretPolicy::Strict, CaretPolicy::Jumps, CaretPolicy::Even
 	int slop;	// Pixels for X, lines for Y
 	CaretPolicySlop(Scintilla::CaretPolicy policy_, intptr_t slop_) noexcept :
 		policy(policy_), slop(static_cast<int>(slop_)) {}
-	CaretPolicySlop(uintptr_t policy_=0, intptr_t slop_=0) noexcept:
+	explicit CaretPolicySlop(uintptr_t policy_=0, intptr_t slop_=0) noexcept:
 		policy(static_cast<Scintilla::CaretPolicy>(policy_)), slop(static_cast<int>(slop_)) {}
 };
 
@@ -262,6 +268,7 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 	Sci::Position posTopLine;
 	Sci::Position lengthForEncode;
 
+	Sci::Position updateTextStart = InvalidPosition;
 	Scintilla::Update needUpdateUI;
 
 	enum class PaintState {
@@ -351,6 +358,7 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 	void RedrawSelMargin(Sci::Line line = -1, bool allAfter = false) noexcept;
 	PRectangle RectangleFromRange(Range r, int overlap) const noexcept;
 	void InvalidateRange(Sci::Position start, Sci::Position end) noexcept;
+	void InvalidateRange(ForwardRange range) noexcept;
 
 	bool UserVirtualSpace() const noexcept {
 		return (FlagSet(virtualSpaceOptions, Scintilla::VirtualSpace::UserAccessible));
@@ -423,7 +431,7 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 	bool Wrapping() const noexcept;
 	void NeedWrapping(Sci::Line docLineStart = 0, Sci::Line docLineEnd = WrapPending::lineLarge, bool invalidate = true) noexcept;
 	bool WrapOneLine(Surface *surface, Sci::Position positionInsert);
-	bool WrapBlock(Surface *surface, Sci::Line lineToWrap, Sci::Line lineToWrapEnd, Sci::Line &partialLine);
+	int WrapBlock(Surface *surface, Sci::Line lineToWrap, Sci::Line lineToWrapEnd);
 	enum class WrapScope {
 		wsAll, wsVisible, wsIdle
 	};
@@ -451,16 +459,16 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 	virtual void InsertCharacter(std::string_view sv, Scintilla::CharacterSource charSource);
 	void ClearSelectionRange(SelectionRange &range);
 	void ClearBeforeTentativeStart();
-	void InsertPaste(const char *text, Sci::Position len);
+	void InsertPaste(std::string_view text);
 	enum class PasteShape {
 		stream = 0, rectangular = 1, line = 2
 	};
-	void InsertPasteShape(const char *text, Sci::Position len, PasteShape shape);
+	void InsertPasteShape(std::string_view text, PasteShape shape);
 	void ClearSelection(bool retainMultipleSelections = false);
 	void ClearAll();
 	void ClearDocumentStyle();
 	virtual void Cut(bool asBinary, bool lineCopy = false);
-	void PasteRectangular(SelectionPosition pos, const char *ptr, Sci::Position len);
+	void PasteRectangular(SelectionPosition pos, std::string_view text);
 	virtual void Copy(bool asBinary) const = 0;
 	void CopyAllowLine() const;
 	void CutAllowLine();
@@ -478,7 +486,7 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 	virtual void NotifyChange() const noexcept = 0;
 	virtual void NotifyFocus(bool focus) const noexcept;
 	virtual void SetCtrlID(int identifier) noexcept;
-	virtual int GetCtrlID() const noexcept {
+	int GetCtrlID() const noexcept {
 		return ctrlID;
 	}
 	virtual void NotifyParent(Scintilla::NotificationData &scn) const noexcept = 0;
@@ -502,6 +510,7 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 
 	void NotifyModifyAttempt(Document *document, void *userData) noexcept override;
 	void NotifySavePoint(Document *document, void *userData, bool atSavePoint) noexcept override;
+	void CheckModificationForWrap(const DocModification &mh);
 	void CheckModificationForShow(const DocModification &mh);
 	void NotifyModified(Document *document, DocModification mh, void *userData) override;
 	void NotifyDeleted(Document *document, void *userData) noexcept override;
@@ -559,8 +568,7 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 	virtual void DisplayCursor(Window::Cursor c) noexcept;
 	virtual bool SCICALL DragThreshold(Point ptStart, Point ptNow) const noexcept;
 	virtual void StartDrag() = 0;
-	void DropAt(SelectionPosition position, const char *value, size_t lengthValue, bool moving, bool rectangular);
-	void DropAt(SelectionPosition position, const char *value, bool moving, bool rectangular);
+	void DropAt(SelectionPosition position, std::string_view value, bool moving, bool rectangular);
 	/** PositionInSelection returns true if position in selection. */
 	bool PositionInSelection(Sci::Position pos) const noexcept;
 	bool SCICALL PointInSelection(Point pt);
@@ -582,6 +590,9 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 	enum class TickReason {
 		caret, scroll, widen, dwell, platform
 	};
+	static constexpr int tickerInterval = 100;	// Default background ticker period for caret blinking, auto-scroll, ...
+	static constexpr int tickerIntervalWiden = 50;	// Ticker period for reflecting measured width to widen scroll bar
+	static constexpr int tickerToleranceFraction = 10;	// Default tolerance is 1/10 of tick interval
 	virtual void TickFor(TickReason reason);
 	virtual bool FineTickerRunning(TickReason reason) const noexcept = 0;
 	virtual void FineTickerStart(TickReason reason, int millis, int tolerance) noexcept = 0;
@@ -632,7 +643,8 @@ protected:	// ScintillaBase subclass needs access to much of Editor
 
 	bool PositionIsHotspot(Sci::Position position) const noexcept;
 	bool SCICALL PointIsHotspot(Point pt);
-	void SetHotSpotRange(const Point *pt);
+	void ClearHotSpotRange() noexcept;
+	void SetHotSpotRange(Point pt);
 	void SetHoverIndicatorPosition(Sci::Position position) noexcept;
 	void SCICALL SetHoverIndicatorPoint(Point pt);
 
@@ -752,7 +764,7 @@ public:
 	operator Surface *() const noexcept {
 		return surf.get();
 	}
-	operator bool() const noexcept {
+	explicit operator bool() const noexcept {
 		return surf.operator bool();
 	}
 };

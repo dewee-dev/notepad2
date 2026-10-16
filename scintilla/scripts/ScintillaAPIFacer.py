@@ -23,12 +23,14 @@ typeAliases = {
 	"int": "int",
 	"keymod": "int",
 	"line": "Line",
+	"pixels": "Pixels",
 	"pointer": "void *",
 	"position": "Position",
 	"string": "const char *",
 	"stringresult": "char *",
 	"textrange": "const TextRangeFull *",
 	"textrangefull": "const TextRangeFull *",
+	"charrange": "const CharacterRangeFull *",
 }
 
 basicTypes = [
@@ -277,7 +279,7 @@ def RegenerateAll(root):
 	HFacer.RegenerateAll(root, False)
 	f = Face.Face()
 	include = root / "include"
-	f.ReadFromFile(include / "Scintilla.iface")
+	f.ReadFromFile(include / "Scintilla.iface", negativeParen=False)
 	FileGenerator.Regenerate(include / "ScintillaMessages.h", "//", HMessages(f))
 	FileGenerator.Regenerate(include / "ScintillaTypes.h", "//", HEnumerations(f), HConstants(f))
 	FileGenerator.Regenerate(include / "ScintillaCall.h", "//", HMethods(f))

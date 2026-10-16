@@ -65,7 +65,7 @@ class Face:
 		self.events = {}
 		self.aliases = {}
 
-	def ReadFromFile(self, name):
+	def ReadFromFile(self, name, negativeParen=True):
 		currentCategory = ""
 		currentComment = []
 		currentCommentFinished = False
@@ -129,7 +129,7 @@ class Face:
 							val = 0
 							if value:
 								val = int(value, 0)
-								if val < 0:
+								if val < 0 and negativeParen:
 									# add parenthesis for negative value
 									value = f'({value})'
 								elif val > maxInt:

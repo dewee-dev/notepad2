@@ -20,7 +20,6 @@
 #include "CharacterSet.h"
 #include "StringUtils.h"
 #include "LexerModule.h"
-#include "LexerUtils.h"
 #include "DocUtils.h"
 
 using namespace Scintilla;
@@ -184,7 +183,7 @@ struct DelimiterRun {
 				// and preceded by Unicode whitespace or a Unicode punctuation character
 				return ccPrev <= CharacterClass::punctuation;
 			}
-			// (2a) not followed by a Unicode punctuation character,
+			// (2a) not followed by a Unicode punctuation character
 			return true;
 		}
 		return false;
@@ -232,16 +231,22 @@ struct DelimiterRun {
 	}
 };
 
+struct MarkupState {
+	int outerState;
+	Sci_PositionU startPos;
+};
+
 struct MarkdownLexer {
 	StyleContext sc;
-	std::vector<int> nestedState;
-	std::vector<Sci_PositionU> backPos;
+	std::vector<MarkupState> nestedState;
 
 	HtmlTagState tagState = HtmlTagState::None; // html tag, link title
 	int indentParent = 0; // parent container's indentChild
 	int delimiterCount = 0; // code fence
+	int outerState = SCE_MARKDOWN_DEFAULT;
 	int bracketCount = 0; // link text
 	int parenCount = 0; // link	destination, link title
+	Sci_PositionU cycleMaxPos = 0;
 	const Markdown markdown;
 	const WordList &blockTagList;
 
@@ -250,32 +255,31 @@ struct MarkdownLexer {
 		markdown{static_cast<Markdown>(styler.GetPropertyInt("lexer.lang"))},
 		blockTagList{keywordLists[KeywordIndex_HtmlBlockTag]} {}
 
-	void SaveOuterStyle(int style) {
-		nestedState.push_back(style);
-	}
 	int TakeOuterStyle() {
-		return TakeAndPop(nestedState);
-	}
-	int TryTakeOuterStyle() {
-		return TryTakeAndPop(nestedState);
-	}
-	void DropOuterStyle() {
+		const int outer = nestedState.back().outerState;
 		nestedState.pop_back();
+		return outer;
 	}
-
-	void SaveOuterStart(Sci_PositionU startPos) {
-		backPos.push_back(startPos);
+	SCI_noinline
+	void OnHtmlTagEnd() {
+		tagState = HtmlTagState::None;
+		int outer = SCE_MARKDOWN_DEFAULT;
+		if (!nestedState.empty()) {
+			outer = nestedState.back().outerState;
+			nestedState.pop_back();
+		}
+		sc.Forward((sc.ch == '>') ? 1 : 2);
+		sc.SetState(outer);
 	}
-	Sci_PositionU TakeOuterStart() {
-		return TakeAndPop(backPos);
-	}
-	void DropOuterStart() {
-		backPos.pop_back();
+	MarkupState TakeOuterState() {
+		const auto state = nestedState.back();
+		nestedState.pop_back();
+		return state;
 	}
 
 	bool IsParagraphEnd(Sci_PositionU pos, uint32_t lineState) const noexcept;
 	bool OnHeaderLine() const noexcept {
-		return !nestedState.empty() && IsHeaderStyle(nestedState.front());
+		return !nestedState.empty() && IsHeaderStyle(nestedState.front().outerState);
 	}
 	bool IsMultilineEnd(uint32_t lineState) const noexcept {
 		return OnHeaderLine() || IsParagraphEnd(sc.lineStartNext, lineState);
@@ -294,7 +298,7 @@ struct MarkdownLexer {
 	uint32_t HighlightIndentedText(uint32_t lineState, int indentCount);
 	bool IsIndentedBlockEnd() const noexcept;
 
-	int GetCurrentDelimiterRun(DelimiterRun &delimiterRun, bool ignoreCurrent = false) const noexcept;
+	int GetCurrentDelimiterRun(DelimiterRun &delimiterRun) const noexcept;
 	SeekStatus HighlightEmphasis(uint32_t lineState, int visibleChars);
 	SeekStatus HighlightCodeSpan(uint32_t lineState);
 
@@ -412,7 +416,7 @@ void MarkdownLexer::HighlightDelimiterRow() {
 				if (sc.ch == ':' && (sc.chNext == ':' || IsSpaceOrTab(sc.chNext))) {
 					// Pandoc fenced divs
 					// Pandoc, MultiMarkdown, PHP Markdown Extra definition list
-					SaveOuterStyle(SCE_MARKDOWN_DEFAULT);
+					outerState = SCE_MARKDOWN_DEFAULT;
 					sc.SetState(SCE_MARKDOWN_DELIMITER);
 				}
 				return;
@@ -430,7 +434,7 @@ void MarkdownLexer::HighlightDelimiterRow() {
 	if (pipe) {
 		int style = SCE_MARKDOWN_DELIMITER_ROW;
 		if (sc.ch == '|' || sc.ch == '+') {
-			SaveOuterStyle(style);
+			outerState = style;
 			style = SCE_MARKDOWN_DELIMITER;
 		}
 		sc.SetState(style);
@@ -677,15 +681,9 @@ int MarkdownLexer::UpdateParentIndentCount(int indentCurrent) noexcept {
 	return indentCurrent;
 }
 
-int MarkdownLexer::GetCurrentDelimiterRun(DelimiterRun &delimiterRun, bool ignoreCurrent) const noexcept {
+int MarkdownLexer::GetCurrentDelimiterRun(DelimiterRun &delimiterRun) const noexcept {
 	int chPrev = sc.chPrev;
-	int delimiter = sc.ch;
-	Sci_PositionU pos = sc.currentPos;
-	if (ignoreCurrent) {
-		chPrev = delimiter;
-		delimiter = sc.chNext;
-		pos += sc.width;
-	}
+	const Sci_PositionU pos = sc.currentPos;
 
 	// unlike official Lexilla, for performance reason our StyleContext
 	// for UTF-8 encoding is byte oriented instead of character oriented.
@@ -695,7 +693,7 @@ int MarkdownLexer::GetCurrentDelimiterRun(DelimiterRun &delimiterRun, bool ignor
 		chPrev = sc.styler.GetCharacterAt(position);
 	}
 
-	auto [count, chNext] = GetMatchedDelimiterCountEx(sc.styler, pos, delimiter);
+	auto [count, chNext] = GetMatchedDelimiterCountEx(sc.styler, pos, sc.ch);
 	if (chNext & 0x80) {
 		chNext = sc.styler.GetCharacterAt(pos + count);
 	}
@@ -708,11 +706,9 @@ int MarkdownLexer::GetCurrentDelimiterRun(DelimiterRun &delimiterRun, bool ignor
 	return count;
 }
 
-/*
-constexpr bool IsEmphasisDelimiter(int ch) noexcept {
-	return ch == '*' || ch == '_' || ch == '~';
+constexpr bool IsDoubleDelimiter(int state) noexcept {
+	return state >= SCE_MARKDOWN_STRONG_ASTERISK;
 }
-*/
 
 constexpr uint8_t GetEmphasisDelimiter(int state) noexcept {
 	if constexpr (SCE_MARKDOWN_EM_ASTERISK & 1) {
@@ -730,16 +726,15 @@ SeekStatus MarkdownLexer::HighlightEmphasis(uint32_t lineState, int visibleChars
 		DelimiterRun delimiterRun;
 		const int length = GetCurrentDelimiterRun(delimiterRun);
 
-		const bool closed = delimiterRun.CanClose(delimiter);
+		const bool closed = (!IsDoubleDelimiter(current) || length != 1) && delimiterRun.CanClose(delimiter);
 		result = closed ? HighlightResult::Finish : HighlightResult::Continue;
 		if (current != SCE_MARKDOWN_STRIKEOUT) {
 			// TODO: fix longest match failure for `***strong** in emph* t`
-			if (length == 1 && current >= SCE_MARKDOWN_STRONG_ASTERISK) {
-				// inner emphasis with `*`
-				result = HighlightResult::None;
-			} else if (!closed || (current < SCE_MARKDOWN_STRONG_ASTERISK && length == 2)) {
-				if (delimiterRun.CanOpen(delimiter)) {
-					// inner strong emphasis with `**`
+			// inner emphasis with `*`, inner strong emphasis with `**`
+			const int inner = IsDoubleDelimiter(current) ? 1 : 2;
+			if ((!closed || length == inner) && delimiterRun.CanOpen(delimiter)) {
+				// prevent cycle/infinite loop when reparse nested emphasis text
+				if (sc.currentPos > cycleMaxPos) {
 					result = HighlightResult::None;
 				}
 			}
@@ -762,23 +757,22 @@ SeekStatus MarkdownLexer::HighlightEmphasis(uint32_t lineState, int visibleChars
 	}
 
 	if (result != HighlightResult::None) {
-		const int outer = TakeOuterStyle();
-		const Sci_PositionU startPos = TakeOuterStart();
+		const auto state = TakeOuterState();
 		if (result == HighlightResult::Finish) {
-			if (current >= SCE_MARKDOWN_STRONG_ASTERISK) {
+			if (IsDoubleDelimiter(current)) {
 				sc.Forward();
 			}
-			sc.ForwardSetState(outer);
+			sc.ForwardSetState(state.outerState);
 			return SeekStatus::Continue;
 		}
 
-		sc.ChangeState(outer);
+		sc.ChangeState(state.outerState);
 		// no rewind inside link text to avoid extra stack for bracketCount.
 		if (bracketCount == 0) {
-			const bool multiline = sc.BackTo(startPos);
+			cycleMaxPos = sci::max(cycleMaxPos, state.startPos);
+			const bool multiline = sc.BackTo(state.startPos);
 			sc.Forward();
-			if ((current == SCE_MARKDOWN_STRIKEOUT)
-				|| (result == HighlightResult::Continue && current >= SCE_MARKDOWN_STRONG_ASTERISK)) {
+			if (IsDoubleDelimiter(current)) {
 				sc.Forward();
 			}
 			return multiline ? SeekStatus::Multiline : SeekStatus::Continue;
@@ -803,8 +797,9 @@ SeekStatus MarkdownLexer::HighlightLinkText(uint32_t lineState) {
 		Sci_PositionU startPos = 0;
 		--bracketCount;
 		if (bracketCount == 0) {
-			startPos = TakeOuterStart();
-			sc.SetState(TakeOuterStyle());
+			const auto state = TakeOuterState();
+			startPos = state.startPos;
+			sc.SetState(state.outerState);
 		}
 		if (sc.ch == '(' || (sc.ch == ':' && bracketCount == 0 && nestedState.empty() && sc.state == SCE_MARKDOWN_DEFAULT
 			&& IsLinkReferenceDefinition(sc.styler, sc.currentLine, startPos))) {
@@ -817,8 +812,7 @@ SeekStatus MarkdownLexer::HighlightLinkText(uint32_t lineState) {
 				chNext = LexGetNextChar(sc.styler, startPos, endPos);
 			}
 			if (chNext != '\0') {
-				SaveOuterStyle(sc.state);
-				SaveOuterStart(sc.currentPos);
+				nestedState.push_back({sc.state, sc.currentPos});
 				tagState = (startPos == sc.currentPos) ? HtmlTagState::None : HtmlTagState::Open;
 				parenCount = sc.ch == '(';
 				const int style = (chNext == '<') ? SCE_MARKDOWN_ANGLE_LINK
@@ -845,15 +839,16 @@ SeekStatus MarkdownLexer::HighlightLinkText(uint32_t lineState) {
 	// to estimate the 999 characters limitation on link label,
 	// exact character count can be implemented with GetRelativePosition().
 	constexpr Sci_PositionU maxLength = 1024;
-	const bool invalid = sc.currentPos - backPos.back() >= maxLength;
+	const bool invalid = sc.currentPos - nestedState.back().startPos >= maxLength;
 	if (invalid || sc.atLineEnd) {
 		if (!invalid && !IsMultilineEnd(lineState)) {
 			return SeekStatus::None;
 		}
 
 		bracketCount = 0;
-		sc.ChangeState(TakeOuterStyle());
-		const bool multiline = sc.BackTo(TakeOuterStart());
+		const auto state = TakeOuterState();
+		sc.ChangeState(state.outerState);
+		const bool multiline = sc.BackTo(state.startPos);
 		sc.Forward();
 		return multiline ? SeekStatus::Multiline : SeekStatus::Continue;
 	}
@@ -934,7 +929,7 @@ SeekStatus MarkdownLexer::HighlightLinkDestination(uint32_t lineState) {
 			if (parenCount == 0 && sc.state != SCE_MARKDOWN_PLAIN_LINK) {
 				result = HighlightResult::Finish;
 			}
-		} else if (sc.state != SCE_MARKDOWN_LINK_TITLE_PAREN && !IsGraphic(sc.ch)) {
+		} else if (sc.state != SCE_MARKDOWN_LINK_TITLE_PAREN && sc.ch <= ' ') {
 			result = HighlightResult::Invalid;
 			if (IsASpace(sc.ch)) {
 				while (IsSpaceOrTab(sc.ch)) {
@@ -972,7 +967,6 @@ SeekStatus MarkdownLexer::HighlightLinkDestination(uint32_t lineState) {
 		parenCount = 0;
 		const int current = sc.state;
 		const int outer = TakeOuterStyle();
-		DropOuterStart();
 		if (sc.ch == ')' && current != SCE_MARKDOWN_LINK_TITLE_PAREN) {
 			// make brace matching work
 			sc.SetState(SCE_MARKDOWN_LINK_TEXT);
@@ -1013,8 +1007,8 @@ SeekStatus MarkdownLexer::HighlightLinkDestination(uint32_t lineState) {
 			if (marker == '\0' || IsMultilineEnd(lineState)) {
 				// no link title
 				tagState = HtmlTagState::None;
-				sc.SetState(TakeOuterStyle());
-				DropOuterStart();
+				const int outer = TakeOuterStyle();
+				sc.SetState(outer);
 				return SeekStatus::Continue;
 			}
 		}
@@ -1024,8 +1018,9 @@ SeekStatus MarkdownLexer::HighlightLinkDestination(uint32_t lineState) {
 		// invalid link destination or title
 		tagState = HtmlTagState::None;
 		parenCount = 0;
-		sc.ChangeState(TakeOuterStyle());
-		const bool multiline = sc.BackTo(TakeOuterStart());
+		const auto state = TakeOuterState();
+		sc.ChangeState(state.outerState);
+		const bool multiline = sc.BackTo(state.startPos);
 		sc.Forward();
 		return multiline ? SeekStatus::Multiline : SeekStatus::Continue;
 	}
@@ -1102,20 +1097,20 @@ bool MarkdownLexer::HandleHtmlTag(HtmlTagType tagType) {
 			sc.Advance(3);
 			// handle empty comment: <!-->, <!--->
 			// https://html.spec.whatwg.org/multipage/parsing.html#parse-error-abrupt-closing-of-empty-comment
-			if (sc.chNext == '>' || sc.MatchNext('-', '>')) {
-				sc.Forward((sc.chNext == '>') ? 2 : 3);
+			sc.chPrev = '-';
+			if (sc.chNext == '>') {
+				sc.Forward(2);
 				sc.SetState(current);
 				return true;
 			}
 		} else if (chNext == '[' && sc.styler.Match(sc.currentPos + 3, "CDATA[")) {
 			// <![CDATA[ ]]>
 			sc.SetState(SCE_H_CDATA);
-			sc.Advance(8);
 		} else if (IsAlpha(chNext)) {
 			// <!DOCTYPE html>
 			sc.SetState(SCE_H_SGML_COMMAND);
-		} else if (tagType == HtmlTagType::Inline) {
-			sc.SetState(STYLE_LINK);
+		// } else if (tagType == HtmlTagType::Inline) {
+		// 	sc.SetState(STYLE_LINK); // <autolink>
 		}
 	} else if (sc.chNext == '?') {
 		// <?php ?>
@@ -1147,11 +1142,11 @@ bool MarkdownLexer::HandleHtmlTag(HtmlTagType tagType) {
 			sc.ForwardSetState(SCE_H_BLOCK_TAG);
 		}
 	// } else if (tagType == HtmlTagType::Inline && !IsInvalidUrlChar(sc.chNext)) {
-		// <autolink>
+	// 	sc.SetState(STYLE_LINK); // <autolink>
 	}
 	if (current != sc.state) {
 		if (tagType == HtmlTagType::Inline) {
-			SaveOuterStyle(current);
+			nestedState.push_back({current, 0});
 		}
 		return true;
 	}
@@ -1160,11 +1155,15 @@ bool MarkdownLexer::HandleHtmlTag(HtmlTagType tagType) {
 
 // https://pandoc.org/MANUAL.html#math
 constexpr bool IsMathOpenDollar(int chNext) noexcept {
-	return !IsASpace(chNext);
+	return chNext > ' ';
 }
 
 constexpr bool IsMathCloseDollar(int chPrev, int chNext) noexcept {
-	return !IsASpace(chPrev) && !IsADigit(chNext);
+	return chPrev > ' ' && !IsADigit(chNext);
+}
+
+constexpr bool IsSubSuperScript(int chNext) noexcept {
+	return chNext > ' ';
 }
 
 bool MarkdownLexer::IsParagraphEnd(Sci_PositionU pos, uint32_t lineState) const noexcept {
@@ -1373,7 +1372,7 @@ int MarkdownLexer::HighlightBlockText(uint32_t lineState) {
 	case '~':
 		if (IsSpaceOrTab(sc.chNext)) {
 			// Pandoc definition list
-			SaveOuterStyle(SCE_MARKDOWN_DEFAULT);
+			outerState = SCE_MARKDOWN_DEFAULT;
 			sc.SetState(SCE_MARKDOWN_DELIMITER);
 		}
 		break;
@@ -1397,6 +1396,7 @@ int MarkdownLexer::HighlightBlockText(uint32_t lineState) {
 void MarkdownLexer::HighlightInlineText(int visibleChars) {
 	bool handled = false;
 	const int current = sc.state;
+	const Sci_PositionU currentPos = sc.currentPos;
 	switch (sc.ch) {
 	case '\\':
 		if (IsPunctuation(sc.chNext)) {
@@ -1421,7 +1421,7 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 		break;
 
 	case '`':
-		delimiterCount = GetMatchedDelimiterCount(sc.styler, sc.currentPos, '`');
+		delimiterCount = GetMatchedDelimiterCount(sc.styler, currentPos, '`');
 		sc.SetState(SCE_MARKDOWN_CODE_SPAN);
 		sc.Advance(delimiterCount - 1);
 		break;
@@ -1442,13 +1442,12 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 						style += SCE_MARKDOWN_STRONG_ASTERISK - SCE_MARKDOWN_EM_ASTERISK;
 					}
 				}
-				SaveOuterStart(sc.currentPos);
 				sc.SetState(style);
 			}
 			if (delimiter == sc.chNext) {
 				sc.Forward(); // longest match
 			}
-		} else if (markdown == Markdown::Pandoc && IsGraphic(sc.chNext)) {
+		} else if (markdown == Markdown::Pandoc && IsSubSuperScript(sc.chNext)) {
 			sc.SetState(SCE_MARKDOWN_SUBSCRIPT);
 		}
 		break;
@@ -1461,7 +1460,6 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 			if (sc.ch == '[') {
 				style += SCE_MARKDOWN_DIFF_ADD_SQUARE - SCE_MARKDOWN_DIFF_ADD_CURLY;
 			}
-			SaveOuterStart(sc.currentPos);
 			sc.SetState(style);
 			sc.Forward();
 		} else if (sc.ch == '[') {
@@ -1475,7 +1473,6 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 			} else if (!(sc.chPrev == '!' || sc.GetLineNextChar(true) == '\0')) {
 				// chPrev == '!' means parsing image link failed
 				bracketCount = 1;
-				SaveOuterStart(sc.currentPos);
 				sc.SetState(SCE_MARKDOWN_LINK_TEXT);
 			}
 		}
@@ -1484,7 +1481,6 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 	case '!':
 		if (sc.chNext == '[') {
 			bracketCount = 1;
-			SaveOuterStart(sc.currentPos);
 			sc.SetState(SCE_MARKDOWN_LINK_TEXT);
 			sc.Forward();
 		}
@@ -1524,7 +1520,7 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 		break;
 
 	case '^':
-		if (markdown == Markdown::Pandoc && IsGraphic(sc.chNext)) {
+		if (markdown == Markdown::Pandoc && IsSubSuperScript(sc.chNext)) {
 			sc.SetState(SCE_MARKDOWN_SUPERSCRIPT);
 		}
 		break;
@@ -1536,7 +1532,11 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 		break;
 	}
 	if (handled || current != sc.state) {
-		SaveOuterStyle(current);
+		if (sc.state == SCE_H_ENTITY || (sc.state >= SCE_MARKDOWN_ESCAPECHAR && sc.state < SCE_MARKDOWN_DIFF_ADD_CURLY)) {
+			outerState = current;
+		} else {
+			nestedState.push_back({current, currentPos});
+		}
 	} else if (visibleChars != 0
 		&& ((sc.ch == '\\' && IsEOLChar(sc.chNext)) || (sc.Match(' ', ' ') && IsEOLChar(sc.GetRelative(2))))) {
 		sc.SetState(SCE_MARKDOWN_HARD_LINE_BREAK);
@@ -1549,8 +1549,7 @@ void MarkdownLexer::HighlightInlineText(int visibleChars) {
 
 SeekStatus MarkdownLexer::HighlightCodeSpan(uint32_t lineState) {
 	HighlightResult result = HighlightResult::None;
-	switch (sc.state) {
-	case SCE_MARKDOWN_CODE_SPAN:
+	if (sc.state == SCE_MARKDOWN_CODE_SPAN) {
 		if (sc.ch == '`') {
 			const int count = GetMatchedDelimiterCount(sc.styler, sc.currentPos, '`');
 			sc.Advance(count - 1);
@@ -1559,11 +1558,7 @@ SeekStatus MarkdownLexer::HighlightCodeSpan(uint32_t lineState) {
 				result = HighlightResult::Finish;
 			}
 		}
-		break;
-
-	case SCE_MARKDOWN_MATH_SPAN:
-	case SCE_MARKDOWN_INLINE_DISPLAY_MATH:
-	case SCE_MARKDOWN_INLINE_MATH:
+	} else {
 		if (sc.ch == '\\') {
 			sc.Forward();
 		} else if (sc.ch == '`') {
@@ -1576,7 +1571,6 @@ SeekStatus MarkdownLexer::HighlightCodeSpan(uint32_t lineState) {
 				result = HighlightResult::Finish;
 			}
 		}
-		break;
 	}
 
 	if (result == HighlightResult::None && sc.atLineEnd && IsMultilineEnd(lineState)) {
@@ -1591,9 +1585,9 @@ SeekStatus MarkdownLexer::HighlightCodeSpan(uint32_t lineState) {
 		return SeekStatus::Continue;
 
 	case HighlightResult::Invalid: {
-		const Sci_PositionU startPos = sc.styler.GetStartSegment();
-		sc.ChangeState(TakeOuterStyle());
-		const bool multiline = sc.BackTo(startPos);
+		const auto state = TakeOuterState();
+		sc.ChangeState(state.outerState);
+		const bool multiline = sc.BackTo(state.startPos);
 		sc.Forward();
 		return multiline ? SeekStatus::Multiline : SeekStatus::Continue;
 	}
@@ -1608,22 +1602,22 @@ bool MarkdownLexer::HighlightCriticMarkup() {
 		// escape sequence, entity, emoji
 		HighlightInlineText();
 	} else if (sc.atLineEnd || sc.ch == '`') {
-		sc.ChangeState(nestedState.back());
-		(void)sc.BackTo(backPos.back());
+		const auto &state = nestedState.back();
+		sc.ChangeState(state.outerState);
+		(void)sc.BackTo(state.startPos);
 		if (sc.ch == '[') {
 			bracketCount = 1;
 			sc.SetState(SCE_MARKDOWN_LINK_TEXT);
 		} else {
-			DropOuterStyle();
-			DropOuterStart();
+			nestedState.pop_back();
 			sc.Forward();
 			return true;
 		}
 	} else if (sc.ch == ((sc.state < SCE_MARKDOWN_DIFF_DEL_CURLY) ? '+' : '-')) {
 		if (sc.chNext == (((sc.state - SCE_MARKDOWN_DIFF_DEL_CURLY) & 1) ? ']' : '}')) {
-			DropOuterStart();
+			const int outer = TakeOuterStyle();
 			sc.Forward(2);
-			sc.SetState(TakeOuterStyle());
+			sc.SetState(outer);
 			return true;
 		}
 	}
@@ -1633,7 +1627,8 @@ bool MarkdownLexer::HighlightCriticMarkup() {
 void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int initStyle, LexerWordList keywordLists, Accessor &styler) {
 	if (startPos != 0) {
 		// backtrack to previous line for better coloring on typing.
-		BacktrackToStart(styler, -LineStateNestedStateLine, startPos, lengthDoc, initStyle);
+		constexpr int mask = INT_MIN | LineStateNestedStateLine | (LineStateEmptyLine << 8);
+		BacktrackToStart(styler, mask, startPos, lengthDoc, initStyle);
 	}
 
 	MarkdownLexer lexer(startPos, lengthDoc, initStyle, keywordLists, styler);
@@ -1747,7 +1742,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 			if (sc.atLineStart) {
 				sc.SetState(SCE_MARKDOWN_DEFAULT);
 			} else if (sc.ch == '|' || sc.ch == '+') {
-				lexer.SaveOuterStyle(SCE_MARKDOWN_DELIMITER_ROW);
+				lexer.outerState = SCE_MARKDOWN_DELIMITER_ROW;
 				sc.SetState(SCE_MARKDOWN_DELIMITER);
 			}
 			break;
@@ -1794,7 +1789,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 		case SCE_MARKDOWN_DEFINITION_LIST:
 		case SCE_MARKDOWN_ORDERED_LIST:
 		case SCE_MARKDOWN_EXT_ORDERED_LIST:
-			if (!IsGraphic(sc.ch)) {
+			if (sc.ch <= ' ') {
 				if (sc.state != SCE_MARKDOWN_EXT_ORDERED_LIST) {
 					indentChild = lexer.GetListChildIndentCount(indentCurrent);
 					lineState |= LineStateListItemFirstLine | (static_cast<uint32_t>(indentChild) << 24);
@@ -1884,7 +1879,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 		case SCE_MARKDOWN_ESCAPECHAR:
 		case SCE_MARKDOWN_DELIMITER:
 		case SCE_MARKDOWN_TASK_LIST:
-			sc.SetState(lexer.TakeOuterStyle());
+			sc.SetState(lexer.outerState);
 			continue;
 
 		case SCE_MARKDOWN_EMOJI:
@@ -1892,11 +1887,11 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 		case SCE_MARKDOWN_CITATION_AT:
 			if ((sc.ch == ':' && sc.state == SCE_MARKDOWN_EMOJI)
 				|| (sc.ch == ')' && sc.state == SCE_MARKDOWN_EXAMPLE_LIST)) {
-				sc.ForwardSetState(lexer.TakeOuterStyle());
+				sc.ForwardSetState(lexer.outerState);
 				continue;
 			}
 			if (!(IsIdentifierChar(sc.ch) || sc.ch == '-')) {
-				const int outer = lexer.TakeOuterStyle();
+				const int outer = lexer.outerState;
 				if (sc.state == SCE_MARKDOWN_CITATION_AT) {
 					sc.SetState(outer);
 				} else {
@@ -1914,15 +1909,15 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 				sc.Forward();
 			} else if ((sc.ch == '^' && sc.state == SCE_MARKDOWN_SUPERSCRIPT)
 				|| (sc.ch == '~' && sc.state == SCE_MARKDOWN_SUBSCRIPT)) {
-				sc.ForwardSetState(lexer.TakeOuterStyle());
+				sc.ForwardSetState(lexer.outerState);
 				continue;
-			} else if (!IsGraphic(sc.ch)) {
+			} else if (sc.ch <= ' ') {
 				sc.Rewind();
 				if (IsAlphaNumeric(sc.chNext)) { // MultiMarkdown
 					const int style = sc.state + SCE_MARKDOWN_SHORT_SUPERSCRIPT - SCE_MARKDOWN_SUPERSCRIPT;
 					sc.ChangeState(style);
 				} else {
-					sc.ChangeState(lexer.TakeOuterStyle());
+					sc.ChangeState(lexer.outerState);
 					sc.Forward();
 					continue;
 				}
@@ -1932,7 +1927,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 		case SCE_MARKDOWN_SHORT_SUPERSCRIPT:
 		case SCE_MARKDOWN_SHORT_SUBSCRIPT:
 			if (!IsAlphaNumeric(sc.ch)) {
-				sc.SetState(lexer.TakeOuterStyle());
+				sc.SetState(lexer.outerState);
 				continue;
 			}
 			break;
@@ -1954,9 +1949,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 				if (sc.state != SCE_H_TAG) {
 					sc.SetState(SCE_H_TAG);
 				}
-				lexer.tagState = HtmlTagState::None;
-				sc.Forward((sc.ch == '/') ? 2 : 1);
-				sc.SetState(lexer.TryTakeOuterStyle());
+				lexer.OnHtmlTagEnd();
 				continue;
 			}
 			if (sc.state == SCE_H_OTHER) {
@@ -1987,7 +1980,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 
 		case SCE_H_ENTITY:
 			if (!IsAlphaNumeric(sc.ch)) {
-				const int outer = lexer.TakeOuterStyle();
+				const int outer = lexer.outerState;
 				if (sc.ch == ';') {
 					sc.Forward();
 				} else {
@@ -2033,32 +2026,21 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 			break;
 
 		case SCE_H_COMMENT:
-			if (sc.Match('-', '-')) {
-				do {
-					sc.Forward();
-				} while (sc.ch == '-');
+			if (sc.chPrev == '-' && sc.ch == '-' && (sc.chNext == '>' || sc.chNext == '!')) {
+				sc.Forward();
 				// close HTML comment with --!>
 				// https://html.spec.whatwg.org/multipage/parsing.html#parse-error-incorrectly-closed-comment
-				if (sc.ch == '>' || sc.Match('!', '>')) {
-					lexer.tagState = HtmlTagState::None;
-					sc.Forward((sc.ch == '>') ? 1 : 2);
-					sc.SetState(lexer.TryTakeOuterStyle());
+				if (sc.ch == '>' || sc.chNext == '>') {
+					lexer.OnHtmlTagEnd();
 					continue;
 				}
 			}
 			break;
 
 		case SCE_H_CDATA:
-			if (sc.Match(']', ']', '>')) {
-				const HtmlTagState tag = lexer.tagState;
-				lexer.tagState = HtmlTagState::None;
-				sc.Forward(3);
-				if (tag == HtmlTagState::None && sc.GetLineNextChar() == '\0') {
-					lineState |= LineStateBlockEndLine;
-				} else {
-					sc.SetState(lexer.TryTakeOuterStyle());
-					continue;
-				}
+			if (sc.Match(']', '>') && sc.chPrev == ']') {
+				lexer.OnHtmlTagEnd();
+				continue;
 			}
 			break;
 
@@ -2068,9 +2050,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 				if (sc.state == SCE_H_PROCESS_TEXT) {
 					sc.SetState(SCE_H_QUESTION);
 				}
-				lexer.tagState = HtmlTagState::None;
-				sc.Forward(2);
-				sc.SetState(lexer.TryTakeOuterStyle());
+				lexer.OnHtmlTagEnd();
 				continue;
 			}
 			if (sc.state == SCE_H_QUESTION) {
@@ -2094,8 +2074,7 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 				if (sc.state == SCE_H_SGML_DEFAULT) {
 					sc.SetState(SCE_H_SGML_COMMAND);
 				}
-				lexer.tagState = HtmlTagState::None;
-				sc.ForwardSetState(lexer.TryTakeOuterStyle());
+				lexer.OnHtmlTagEnd();
 				continue;
 			}
 			if (sc.state == SCE_H_SGML_COMMAND) {
@@ -2165,11 +2144,10 @@ void ColouriseMarkdownDoc(Sci_PositionU startPos, Sci_Position lengthDoc, int in
 				prevLevel = nextLevel;
 			}
 			if (!lexer.nestedState.empty()) {
-				const int outer = lexer.nestedState.front();
+				const int outer = lexer.nestedState.front().outerState;
 				if (IsHeaderStyle(outer)) {
 					lexer.tagState = HtmlTagState::None;
 					lexer.nestedState.clear();
-					lexer.backPos.clear();
 					sc.SetState(outer);
 				}
 			}

@@ -59,7 +59,7 @@ lexerList = [
 	('NP2LEX_JSON', 'stlJSON.cpp', 'LexJSON.cxx', '', 0, parse_json_api_file),
 	('NP2LEX_JULIA', 'stlJulia.cpp', 'LexJulia.cxx', 'Julia.jl', 0, parse_julia_api_file),
 
-	('NP2LEX_LATEX', 'stlLaTeX.cpp', 'LexLaTeX.cxx', '', 0, None),
+	('NP2LEX_LATEX', 'stlLaTeX.cpp', 'LexLaTeX.cxx', 'LaTeX.tex', 0, parse_latex_api_file),
 	('NP2LEX_LISP', 'stlLisp.cpp', 'LexLisp.cxx', '', 0, None),
 	('NP2LEX_LLVM', 'stlLLVM.cpp', 'LexLLVM.cxx', 'LLVM.ll', 0, parse_llvm_api_file),
 	('NP2LEX_LUA', 'stlLua.cpp', 'LexLua.cxx', 'Lua.lua', 0, parse_lua_api_file),
@@ -122,7 +122,6 @@ lexerList = [
 ]
 
 def update_all_keyword():
-	numKeyword = 16
 	handled = set()
 	for rid, output, lexer, path, count, parse in lexerList:
 		assert rid.startswith('NP2LEX_'), rid
@@ -141,19 +140,19 @@ def update_all_keyword():
 
 		output = '../src/EditLexers/' + output
 		if isinstance(count, tuple):
-			num, suffix = count
+			reservedCount, suffix = count
 		else:
-			num = count
+			reservedCount = count
 			suffix = ''
-		UpdateKeywordFile(rid, output, lexer, keywordList, numKeyword - num, suffix)
+		UpdateKeywordFile(rid, output, lexer, keywordList, reservedCount, suffix)
 
-	UpdateKeywordFile('', '../src/EditLexers/EditStyleX.h', '', [], numKeyword, 'Scheme Default')
+	UpdateKeywordFile('', '../src/EditLexers/EditStyleX.h', '', [], 0, 'Scheme Default')
 	config = set(LexerConfigMap.keys())
 	if missing := config - handled:
 		print('missing lexer config:', ', '.join(sorted(missing)))
 	if missing := handled - config:
 		print('default lexer config:', ', '.join(sorted(missing)))
-	UpdateLexerKeywordAttr('../src/EditAutoC.cpp', '../scintilla/lexers/')
+	UpdateLexerKeywordAttr('../src/EditAutoC.cpp', '../src/Styles.cpp', '../scintilla/lexers/')
 
 update_all_keyword()
 UpdateLexerEnumFile('../src/EditLexer.h', '../scintilla/lexlib/WordList.h')
